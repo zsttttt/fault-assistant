@@ -1,0 +1,14 @@
+INFO:     Will watch for changes in these directories: ['D:\\pythonstudio\\fault-assistant']
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [9432] using StatReload
+INFO:     Started server process [12032]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     127.0.0.1:2589 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:4042 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:5148 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:14176 - "GET /docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:14176 - "GET /openapi.json HTTP/1.1" 200 OK
+INFO:     127.0.0.1:14177 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:14187 - "POST /api/chat HTTP/1.1" 200 OK
+WARNING:  StatReload detected changes in 'view_database.py'. Reloading...

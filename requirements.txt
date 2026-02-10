@@ -1,0 +1,29 @@
+# Web 框架
+fastapi==0.104.1
+uvicorn==0.24.0
+
+# 跨域支持
+python-multipart==0.0.6
+
+# 环境变量管理
+python-dotenv==1.0.0
+
+# HTTP 请求（调用 LLM API）
+httpx==0.25.2
+
+# 向量检索（兼容 Python 3.12 的版本）
+sentence-transformers==2.6.1
+numpy>=1.26.0
+
+# 数据库（使用 SQLite，无需额外安装）
+# Python 内置 sqlite3
+
+# 可选：如果使用 Claude API
+anthropic==0.7.7
+
+# 可选：如果使用通义千问
+dashscope==1.14.1
+
+# Excel处理
+pandas>=2.0.0
+openpyxl>=3.0.0
