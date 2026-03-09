@@ -4,21 +4,33 @@
 import sys
 import io
 import uuid
-from typing import Optional
+import json
+import asyncio
+from typing import Optional, List
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import tempfile
 import os
 
-from config import HOST, PORT, DEBUG
+from config import HOST, PORT, DEBUG, ADMIN_PASSWORD, USER_USERNAME, USER_PASSWORD
 from database import init_db, save_conversation, update_feedback, get_unsolved_issues, add_knowledge, get_all_knowledge, import_from_excel, preview_excel, get_excel_sheets
-from rag import get_retriever, reload_retriever, generate_answer
+from rag import get_retriever, reload_retriever
+from src.retrieval.result_parser import parse_retrieved_results
+from src.generation.multimodal_generator import generate_multimodal_answer, generate_multimodal_answer_stream
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
+
+def _replace_inline_placeholders(text: str, mapping: dict) -> str:
+    for pid, replacement in mapping.items():
+        text = text.replace(f"[[IMG:{pid}]]", replacement)
+    return text
 
 
 @asynccontextmanager
@@ -26,6 +38,10 @@ async def lifespan(app: FastAPI):
     """服务生命周期管理"""
     print("🚀 故障助手服务启动中...")
     init_db()
+
+    from src.indexing.indexer import init_indexer
+    init_indexer()
+
     get_retriever()
     print(f"✅ 服务已启动: http://{HOST}:{PORT}")
     print(f"📖 API 文档: http://{HOST}:{PORT}/docs")
@@ -36,7 +52,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="故障助手 API",
     description="加油机/充电桩设备故障诊断服务",
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan
 )
 
@@ -48,17 +64,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
 
 # ==================== 数据模型 ====================
 
 class ChatRequest(BaseModel):
     question: str
     device_model: Optional[str] = None
+    session_id: Optional[str] = None  # 多轮对话会话 ID，不传则为单轮
 
 class ChatResponse(BaseModel):
     answer: str
     conversation_id: str
     confidence: str
+    media: Optional[dict] = None
 
 class FeedbackRequest(BaseModel):
     conversation_id: str
@@ -72,44 +92,140 @@ class KnowledgeRequest(BaseModel):
     keywords: Optional[str] = ""
     device_models: Optional[str] = ""
 
+class UserAuthRequest(BaseModel):
+    username: str
+    password: str
+
+class AdminAuthRequest(BaseModel):
+    password: str
+
+class BatchDeleteRequest(BaseModel):
+    ids: List[str]
+
+
+# ==================== Auth 依赖 ====================
+
+def require_admin(x_admin_password: str = Header(...)):
+    if x_admin_password != ADMIN_PASSWORD:
+        raise HTTPException(status_code=401, detail="密码错误")
+
 
 # ==================== API 接口 ====================
 
-@app.get("/")
-async def root():
-    """健康检查"""
+@app.get("/", response_class=HTMLResponse)
+async def chat_page():
+    """聊天主界面"""
+    with open("static/index.html", "r", encoding="utf-8") as f:
+        return HTMLResponse(content=f.read())
+
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_page():
+    """后台管理界面"""
+    with open("static/admin.html", "r", encoding="utf-8") as f:
+        return HTMLResponse(content=f.read())
+
+
+@app.post("/api/user/auth")
+async def user_auth(req: UserAuthRequest):
+    """前台用户登录验证"""
+    if req.username != USER_USERNAME or req.password != USER_PASSWORD:
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+    return {"status": "ok"}
+
+
+@app.post("/api/admin/auth")
+async def admin_auth(req: AdminAuthRequest):
+    """后台管理员密码验证"""
+    if req.password != ADMIN_PASSWORD:
+        raise HTTPException(status_code=401, detail="密码错误")
+    return {"status": "ok"}
+
+
+@app.get("/health")
+async def health():
     return {"status": "ok", "service": "故障助手"}
+
+
+@app.post("/api/chat/stream")
+async def chat_stream(req: ChatRequest):
+    """流式对话接口（SSE），实时返回 LLM 生成内容"""
+    if not req.question.strip():
+        raise HTTPException(status_code=400, detail="问题不能为空")
+
+    async def event_stream():
+        try:
+            retriever = get_retriever()
+            context, confidence = await asyncio.to_thread(retriever.retrieve, req.question)
+            parsed = parse_retrieved_results(context)
+
+            full_answer = ""
+            media = {"images": [], "videos": []}
+            async for chunk in generate_multimodal_answer_stream(
+                question=req.question,
+                parsed=parsed,
+                confidence=confidence,
+                device_model=req.device_model,
+                session_id=req.session_id,
+            ):
+                if isinstance(chunk, tuple) and chunk[0] == "__MEDIA__":
+                    media = chunk[1]
+                else:
+                    full_answer += chunk
+                    yield f"data: {json.dumps({'content': chunk}, ensure_ascii=False)}\n\n"
+
+            conversation_id = str(uuid.uuid4())
+            await asyncio.to_thread(
+                save_conversation,
+                conversation_id=conversation_id,
+                device_model=req.device_model or "",
+                question=req.question,
+                answer=full_answer,
+                confidence=confidence,
+            )
+            yield f"data: {json.dumps({'done': True, 'conversation_id': conversation_id, 'confidence': confidence, 'media': media}, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
-    """对话接口"""
+    """对话接口（支持多轮对话，传入 session_id 即可）"""
     if not req.question.strip():
         raise HTTPException(status_code=400, detail="问题不能为空")
-    
+
     retriever = get_retriever()
     context, confidence = retriever.retrieve(req.question)
-    
-    answer = await generate_answer(
+    parsed = parse_retrieved_results(context)
+
+    result = await generate_multimodal_answer(
         question=req.question,
-        context=context,
+        parsed=parsed,
         confidence=confidence,
-        device_model=req.device_model
+        device_model=req.device_model,
+        session_id=req.session_id,
     )
-    
+
     conversation_id = str(uuid.uuid4())
     save_conversation(
         conversation_id=conversation_id,
         device_model=req.device_model or "",
         question=req.question,
-        answer=answer,
+        answer=result["text_answer"],
         confidence=confidence
     )
-    
+
     return ChatResponse(
-        answer=answer,
+        answer=result["text_answer"],
         conversation_id=conversation_id,
-        confidence=confidence
+        confidence=confidence,
+        media=result["media"],
     )
 
 
@@ -125,21 +241,21 @@ async def feedback(req: FeedbackRequest):
 
 
 @app.get("/api/admin/unsolved")
-async def get_unsolved():
+async def get_unsolved(_=Depends(require_admin)):
     """获取未解决问题列表"""
     issues = get_unsolved_issues()
     return {"issues": issues, "count": len(issues)}
 
 
 @app.get("/api/admin/knowledge")
-async def list_knowledge():
+async def list_knowledge(_=Depends(require_admin)):
     """获取所有知识条目"""
     items = get_all_knowledge()
     return {"items": items, "count": len(items)}
 
 
 @app.post("/api/admin/knowledge")
-async def create_knowledge(req: KnowledgeRequest):
+async def create_knowledge(req: KnowledgeRequest, _=Depends(require_admin)):
     """添加知识条目"""
     knowledge_id = add_knowledge(
         error_code=req.error_code,
@@ -152,15 +268,70 @@ async def create_knowledge(req: KnowledgeRequest):
     return {"status": "ok", "id": knowledge_id, "message": "知识添加成功"}
 
 
+@app.post("/api/admin/knowledge/batch-delete")
+async def batch_delete_knowledge(req: BatchDeleteRequest, _=Depends(require_admin)):
+    """批量删除知识条目"""
+    from src.indexing.indexer import delete_knowledge_entry
+    failed = []
+    for doc_id in req.ids:
+        try:
+            delete_knowledge_entry(doc_id)
+        except Exception as e:
+            print(f"❌ 批量删除失败 [{doc_id}]: {e}")
+            failed.append(doc_id)
+    if failed:
+        raise HTTPException(status_code=500, detail=f"{len(failed)} 条删除失败，其余已完成")
+    return {"status": "ok", "deleted": len(req.ids)}
+
+
+@app.delete("/api/admin/knowledge/{doc_id}")
+async def delete_knowledge(doc_id: str, _=Depends(require_admin)):
+    """删除知识条目"""
+    from src.indexing.indexer import delete_knowledge_entry
+    try:
+        delete_knowledge_entry(doc_id)
+    except Exception as e:
+        print(f"❌ 删除知识条目失败 [{doc_id}]: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"status": "ok"}
+
+
+@app.get("/api/admin/documents")
+async def list_documents(_=Depends(require_admin)):
+    """获取已上传文档列表及各文件分块统计"""
+    from src.indexing.indexer import get_all_documents
+    docs = get_all_documents()
+    return {"items": docs, "count": len(docs)}
+
+
+@app.delete("/api/admin/documents/{filename:path}")
+async def delete_document(filename: str, _=Depends(require_admin)):
+    """删除指定文档的所有向量及 B2 图片"""
+    from src.indexing.indexer import get_image_object_keys_by_source, _delete_by_source
+    from src.storage.object_store import get_media_store
+
+    media_store = get_media_store()
+    if media_store:
+        object_keys = get_image_object_keys_by_source(filename)
+        for key in object_keys:
+            try:
+                media_store.delete_file(key)
+            except Exception as e:
+                print(f"⚠️ B2 删除失败 [{key}]: {e}")
+
+    _delete_by_source(filename)
+    return {"status": "ok", "message": f"已删除文件 {filename} 的所有索引数据"}
+
+
 @app.post("/api/admin/reload")
-async def reload_knowledge():
+async def reload_knowledge(_=Depends(require_admin)):
     """重新加载知识库"""
     reload_retriever()
     return {"status": "ok", "message": "知识库已重新加载"}
 
 
 @app.post("/api/admin/knowledge/import/preview")
-async def preview_excel_file(file: UploadFile = File(...)):
+async def preview_excel_file(file: UploadFile = File(...), _=Depends(require_admin)):
     """预览Excel文件内容"""
     if not file.filename.endswith(('.xlsx', '.xls')):
         raise HTTPException(status_code=400, detail="仅支持Excel文件(.xlsx, .xls)")
@@ -187,7 +358,7 @@ async def preview_excel_file(file: UploadFile = File(...)):
 
 
 @app.post("/api/admin/knowledge/import")
-async def import_excel_file(file: UploadFile = File(...), sheet_name: str = None):
+async def import_excel_file(file: UploadFile = File(...), sheet_name: str = None, _=Depends(require_admin)):
     """从Excel文件导入知识数据"""
     if not file.filename.endswith(('.xlsx', '.xls')):
         raise HTTPException(status_code=400, detail="仅支持Excel文件(.xlsx, .xls)")
@@ -210,6 +381,160 @@ async def import_excel_file(file: UploadFile = File(...), sheet_name: str = None
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"导入失败: {str(e)}")
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
+@app.post("/api/admin/knowledge/import/document")
+async def import_document_file(file: UploadFile = File(...), _=Depends(require_admin)):
+    """
+    从文档文件解析并导入知识（支持 PDF、DOCX、PPTX）
+    使用 Docling 解析，自动分离文本/表格/图片并向量化入库
+    """
+    allowed_suffixes = ('.pdf', '.docx', '.pptx', '.doc', '.ppt')
+    if not any(file.filename.lower().endswith(s) for s in allowed_suffixes):
+        raise HTTPException(status_code=400, detail="支持的格式: PDF、DOCX、PPTX")
+
+    suffix = os.path.splitext(file.filename)[1]
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+        content = await file.read()
+        tmp_file.write(content)
+        tmp_path = tmp_file.name
+
+    try:
+        from src.parser.docling_parser import parse_document_with_images
+        from src.chunking.chunker import split_texts, summarize_table
+        from src.indexing.indexer import index_document_elements
+        from src.indexing.image_indexer import index_images
+        from src.storage.object_store import get_media_store
+
+        texts, tables, images, table_images = await asyncio.to_thread(
+            parse_document_with_images, tmp_path
+        )
+
+        inline_imgs  = [img for img in images if img.get("inline")]
+        regular_imgs = [img for img in images if not img.get("inline")]
+
+        media_store = get_media_store()
+
+        placeholder_map: dict = {}
+        if inline_imgs and media_store:
+            for img in inline_imgs:
+                try:
+                    upload_result = media_store.upload_bytes(img["bytes"], img["filename"])
+                    alt = img.get("caption") or "图示"
+                    placeholder_map[img["placeholder_id"]] = f"![{alt}]({upload_result['url']})"
+                except Exception as e:
+                    print(f"⚠️ 内联图片上传失败 [{img['filename']}]: {e}")
+                    placeholder_map[img["placeholder_id"]] = f"[{img.get('caption') or '图示'}]"
+
+        table_image_urls = []
+        if table_images and media_store:
+            for i, img_bytes in enumerate(table_images):
+                if img_bytes:
+                    try:
+                        upload_result = media_store.upload_bytes(img_bytes, f"table_{i+1:03d}.png")
+                        table_image_urls.append(upload_result["url"])
+                    except Exception as e:
+                        print(f"⚠️ 表格图片上传失败 [table_{i+1:03d}]: {e}")
+                        table_image_urls.append(None)
+                else:
+                    table_image_urls.append(None)
+        else:
+            table_image_urls = [None] * len(table_images) if table_images else []
+
+        text_chunks = split_texts(texts)
+        if placeholder_map:
+            text_chunks = [_replace_inline_placeholders(chunk, placeholder_map) for chunk in text_chunks]
+
+        table_summaries = await asyncio.to_thread(
+            lambda: [summarize_table(t) for t in tables]
+        )
+
+        index_document_elements(
+            text_chunks=text_chunks,
+            tables=tables,
+            table_summaries=table_summaries,
+            table_image_urls=table_image_urls,
+            images=[],
+            image_descriptions=[],
+            source_file=file.filename,
+        )
+
+        indexed_image_ids = []
+        if regular_imgs and media_store:
+            indexed_image_ids = await asyncio.to_thread(
+                index_images, regular_imgs, media_store, file.filename
+            )
+        elif regular_imgs and not media_store:
+            print("⚠️ 未配置对象存储，跳过图片索引")
+
+        return {
+            "status": "ok",
+            "filename": file.filename,
+            "indexed": {
+                "text_chunks": len(text_chunks),
+                "tables": len(tables),
+                "images": len(indexed_image_ids),
+            },
+            "message": f"文档解析完成，已导入 {len(text_chunks)} 段文本、{len(tables)} 个表格、{len(indexed_image_ids)} 张图片"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"文档解析失败: {str(e)}")
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
+@app.post("/api/chat/media")
+async def chat_with_media(
+    question: str = Form(...),
+    file: UploadFile = File(...),
+    device_model: Optional[str] = Form(None),
+    session_id: Optional[str] = Form(None),
+):
+    """
+    用户在对话中上传图片或视频时调用
+    multipart/form-data：question（表单字段）+ file（文件）
+    """
+    allowed_exts = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp",
+                    ".mp4", ".avi", ".mov", ".mkv", ".webm"}
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in allowed_exts:
+        raise HTTPException(status_code=400, detail=f"不支持的文件类型: {ext}")
+
+    suffix = ext or ".tmp"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(await file.read())
+        tmp_path = tmp.name
+
+    try:
+        from src.pipeline.realtime_media import handle_user_uploaded_media
+        result = await handle_user_uploaded_media(
+            file_path=tmp_path,
+            question=question,
+            device_model=device_model,
+            session_id=session_id,
+        )
+
+        conversation_id = str(uuid.uuid4())
+        save_conversation(
+            conversation_id=conversation_id,
+            device_model=device_model or "",
+            question=question,
+            answer=result["text_answer"],
+            confidence="medium",
+        )
+
+        return ChatResponse(
+            answer=result["text_answer"],
+            conversation_id=conversation_id,
+            confidence="medium",
+            media=result["media"],
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"媒体处理失败: {str(e)}")
     finally:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)

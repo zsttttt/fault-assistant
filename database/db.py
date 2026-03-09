@@ -80,34 +80,7 @@ def get_unsolved_issues():
     return results
 
 
-def get_all_knowledge():
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM knowledge ORDER BY updated_at DESC")
-    results = [dict(row) for row in cursor.fetchall()]
-    conn.close()
-    return results
-
-
-def add_knowledge(error_code: str, title: str, content: str, keywords: str = "", device_models: str = ""):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO knowledge (error_code, keywords, title, content, device_models)
-        VALUES (?, ?, ?, ?, ?)
-    """, (error_code, keywords, title, content, device_models))
-    conn.commit()
-    knowledge_id = cursor.lastrowid
-    conn.close()
-    return knowledge_id
-
-
-def search_by_error_code(error_code: str):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT * FROM knowledge WHERE error_code = ? OR error_code LIKE ?
-    """, (error_code, f"%{error_code}%"))
-    results = [dict(row) for row in cursor.fetchall()]
-    conn.close()
-    return results
+def add_knowledge(error_code: str, title: str, content: str, keywords: str = "", device_models: str = "") -> str:
+    """委托到 Qdrant 索引模块（向量存储 + InMemoryStore）"""
+    from src.indexing.indexer import add_knowledge_entry
+    return add_knowledge_entry(error_code, title, content, keywords, device_models)

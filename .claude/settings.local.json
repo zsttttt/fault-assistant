@@ -6,7 +6,8 @@
       "Bash(netstat:*)",
       "Bash(curl:*)",
       "Bash(tasklist:*)",
-      "Bash(xargs:*)"
+      "Bash(xargs:*)",
+      "Bash(venv/Scripts/python:*)"
     ]
   }
 }

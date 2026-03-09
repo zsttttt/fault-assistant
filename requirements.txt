@@ -1,29 +1,49 @@
 # Web 框架
 fastapi==0.104.1
 uvicorn==0.24.0
-
-# 跨域支持
 python-multipart==0.0.6
 
 # 环境变量管理
 python-dotenv==1.0.0
 
-# HTTP 请求（调用 LLM API）
+# HTTP 请求
 httpx==0.25.2
 
-# 向量检索（兼容 Python 3.12 的版本）
-sentence-transformers==2.6.1
+# 数值计算
 numpy>=1.26.0
 
-# 数据库（使用 SQLite，无需额外安装）
-# Python 内置 sqlite3
-
-# 可选：如果使用 Claude API
-anthropic==0.7.7
-
-# 可选：如果使用通义千问
-dashscope==1.14.1
-
-# Excel处理
+# Excel 处理
 pandas>=2.0.0
 openpyxl>=3.0.0
+
+# DashScope（千问向量 + LLM）
+dashscope>=1.14.0
+
+# LangChain 生态
+langchain
+langchain-openai
+langchain-community
+langchain-qdrant
+
+# Qdrant 向量数据库（云端）
+qdrant-client
+
+# Redis（对话历史）
+redis
+langchain-redis
+
+# 文档解析
+docling
+
+# 混合检索
+rank-bm25
+
+# 对象存储（Cloudflare R2 / MinIO，S3 兼容）
+boto3>=1.34.0
+
+# 图片处理
+Pillow>=10.0.0
+
+# 视频处理
+opencv-python>=4.8.0
+moviepy>=1.0.3

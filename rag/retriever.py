@@ -1,70 +1,36 @@
 """
-知识检索模块
+知识检索模块 - 基于 Qdrant 向量检索
+替换原有的 DashScope API + numpy 内存方案
 """
 import re
-import numpy as np
 from typing import List, Tuple, Optional
-import dashscope
-from dashscope import TextEmbedding
 
-from config import EMBEDDING_MODEL, SIMILARITY_THRESHOLD_HIGH, SIMILARITY_THRESHOLD_LOW, DASHSCOPE_API_KEY
-from database.db import get_all_knowledge, search_by_error_code
+from langchain_core.documents import Document
+
+from config import SIMILARITY_THRESHOLD_HIGH, SIMILARITY_THRESHOLD_LOW, QDRANT_URL, QDRANT_COLLECTION_NAME
+
+_TEXT_TOP_K = 3
+_IMAGE_QUOTA = 2
 
 
 class KnowledgeRetriever:
     def __init__(self):
-        print("🔄 正在初始化千问向量模型...")
-        dashscope.api_key = DASHSCOPE_API_KEY
-        self.model_name = EMBEDDING_MODEL
-        print("✅ 向量模型配置完成")
-        self.knowledge_items = []
-        self.embeddings = None
-        self.reload_knowledge()
-    
-    def reload_knowledge(self):
-        self.knowledge_items = get_all_knowledge()
-        if not self.knowledge_items:
-            print("⚠️ 知识库为空，请先添加知识条目")
-            self.embeddings = None
+        print("🔄 正在初始化 Qdrant 检索器...")
+        if not QDRANT_URL:
+            print("⚠️ 未配置有效 QDRANT_URL，检索功能降级为不可用")
+            self._available = False
             return
 
-        texts = []
-        for item in self.knowledge_items:
-            search_text = f"{item['error_code'] or ''} {item['title']} {item['keywords'] or ''} {item['content']}"
-            texts.append(search_text)
+        from src.indexing.indexer import get_vectorstore, get_docstore
+        self._vectorstore = get_vectorstore()
+        self._docstore = get_docstore()
+        self._available = True
+        print("✅ Qdrant 检索器初始化完成")
 
-        self.embeddings = self._get_embeddings(texts)
-        print(f"✅ 已加载 {len(self.knowledge_items)} 条知识 (包含完整语义信息)")
+    def reload_knowledge(self):
+        """Qdrant 持久化存储，无需重新加载嵌入"""
+        pass
 
-    def _get_embeddings(self, texts: List[str]) -> np.ndarray:
-        print(f"🔄 调用千问向量API，文本数量: {len(texts)}")
-
-        batch_size = 10
-        all_embeddings = []
-        total_tokens = 0
-
-        for i in range(0, len(texts), batch_size):
-            batch = texts[i:i + batch_size]
-            print(f"   处理批次 {i//batch_size + 1}/{(len(texts)-1)//batch_size + 1}")
-
-            resp = TextEmbedding.call(
-                model=self.model_name,
-                input=batch
-            )
-
-            if resp.status_code == 200:
-                usage = resp.usage
-                total_tokens += usage['total_tokens']
-                embeddings = [item['embedding'] for item in resp.output['embeddings']]
-                all_embeddings.extend(embeddings)
-            else:
-                raise Exception(f"向量化失败: {resp.code} - {resp.message}")
-
-        print(f"✅ API调用成功 - 总token: {total_tokens}")
-        embeddings_array = np.array(all_embeddings)
-        norms = np.linalg.norm(embeddings_array, axis=1, keepdims=True)
-        return embeddings_array / norms
-    
     def _extract_error_code(self, query: str) -> Optional[str]:
         patterns = [
             r'[Ee][-_]?\d{1,4}',
@@ -83,37 +49,128 @@ class KnowledgeRetriever:
                     result = 'E' + result
                 return result
         return None
-    
-    def retrieve(self, query: str, top_k: int = 3) -> Tuple[List[dict], str]:
-        if self.embeddings is None or len(self.knowledge_items) == 0:
+
+    def _expand_image_group(self, group_id: str, exclude_ids: set) -> List[dict]:
+        """从 Qdrant 获取同 group_id 的所有兄弟图片，排除已收录的 ID"""
+        from src.indexing.indexer import get_qdrant_client, ID_KEY
+        from qdrant_client.models import Filter, FieldCondition, MatchValue
+
+        client = get_qdrant_client()
+        try:
+            points, _ = client.scroll(
+                collection_name=QDRANT_COLLECTION_NAME,
+                scroll_filter=Filter(must=[
+                    FieldCondition(key="metadata.group_id", match=MatchValue(value=group_id)),
+                    FieldCondition(key="metadata.type", match=MatchValue(value="image")),
+                ]),
+                limit=20,
+                with_payload=True,
+                with_vectors=False,
+            )
+        except Exception:
+            return []
+
+        siblings = []
+        for point in points:
+            meta = point.payload.get("metadata", {})
+            doc_id = meta.get(ID_KEY)
+            if not doc_id or doc_id in exclude_ids:
+                continue
+            siblings.append({
+                "id": doc_id,
+                "error_code": "",
+                "keywords": "",
+                "title": "",
+                "content": meta.get("original_content", ""),
+                "device_models": "",
+                "similarity_score": 0.0,
+                "type": "image",
+                "media_url": meta.get("media_url", ""),
+            })
+        return siblings
+
+    def retrieve(self, query: str, top_k: int = _TEXT_TOP_K) -> Tuple[List[dict], str]:
+        if not self._available:
             return [], "low"
 
         error_code = self._extract_error_code(query)
 
-        query_embedding = self._get_embeddings([query])[0]
-        similarities = np.dot(self.embeddings, query_embedding)
+        try:
+            docs_with_scores = self._vectorstore.similarity_search_with_relevance_scores(
+                query, k=(top_k + _IMAGE_QUOTA) * 2
+            )
+        except Exception as e:
+            print(f"❌ Qdrant 检索失败: {e}")
+            return [], "low"
+
+        seen_ids: set = set()
+        text_cands: List[dict] = []
+        image_cands: List[dict] = []
+        for doc, score in docs_with_scores:
+            doc_id = doc.metadata.get("doc_id")
+            if not doc_id or doc_id in seen_ids:
+                continue
+            seen_ids.add(doc_id)
+            entry = {"doc_id": doc_id, "score": float(score), "meta": doc.metadata}
+            if doc.metadata.get("type") == "image":
+                image_cands.append(entry)
+            else:
+                text_cands.append(entry)
 
         if error_code:
-            exact_matches = search_by_error_code(error_code)
-            if exact_matches:
-                exact_ids = {item['id'] for item in exact_matches}
-                for idx, item in enumerate(self.knowledge_items):
-                    if item['id'] in exact_ids:
-                        similarities[idx] = max(similarities[idx], 0.95)
+            try:
+                from src.indexing.indexer import search_by_error_code
+                exact_matches = search_by_error_code(error_code)
+                exact_ids = {m["id"] for m in exact_matches}
+                for c in text_cands:
+                    if c["doc_id"] in exact_ids:
+                        c["score"] = max(c["score"], 0.95)
+                text_cands.sort(key=lambda x: x["score"], reverse=True)
+            except Exception:
+                pass
 
-        top_indices = np.argsort(similarities)[::-1][:top_k]
+        selected = text_cands[:top_k] + image_cands[:_IMAGE_QUOTA]
 
-        results = []
-        for idx in top_indices:
-            score = float(similarities[idx])
-            if score > SIMILARITY_THRESHOLD_LOW:
-                item = self.knowledge_items[idx].copy()
-                item['similarity_score'] = score
-                results.append(item)
+        ids = [c["doc_id"] for c in selected]
+        raw_docs = self._docstore.mget(ids)
+
+        results: List[dict] = []
+        result_ids: set = set()
+        for i, c in enumerate(selected):
+            if c["score"] < SIMILARITY_THRESHOLD_LOW:
+                continue
+            raw = raw_docs[i]
+            if raw is None:
+                content = c["meta"].get("original_content", "")
+            elif isinstance(raw, Document):
+                content = raw.page_content
+            else:
+                content = str(raw)
+
+            result_ids.add(c["doc_id"])
+            results.append({
+                "id": c["doc_id"],
+                "error_code": c["meta"].get("error_code", ""),
+                "keywords": c["meta"].get("keywords", ""),
+                "title": c["meta"].get("title", ""),
+                "content": content,
+                "device_models": c["meta"].get("device_models", ""),
+                "similarity_score": c["score"],
+                "type": c["meta"].get("type", "knowledge_entry"),
+                "media_url": c["meta"].get("media_url", ""),
+                "table_image_url": c["meta"].get("table_image_url", ""),
+            })
+
+            if c["meta"].get("type") == "image":
+                gid = c["meta"].get("group_id")
+                if gid:
+                    for sib in self._expand_image_group(gid, result_ids):
+                        result_ids.add(sib["id"])
+                        results.append(sib)
 
         if not results:
             confidence = "low"
-        elif results[0].get('similarity_score', 0) >= SIMILARITY_THRESHOLD_HIGH:
+        elif results[0]["similarity_score"] >= SIMILARITY_THRESHOLD_HIGH:
             confidence = "high"
         else:
             confidence = "medium"
@@ -121,13 +178,15 @@ class KnowledgeRetriever:
         return results, confidence
 
 
-_retriever_instance = None
+_retriever_instance: Optional[KnowledgeRetriever] = None
+
 
 def get_retriever() -> KnowledgeRetriever:
     global _retriever_instance
     if _retriever_instance is None:
         _retriever_instance = KnowledgeRetriever()
     return _retriever_instance
+
 
 def reload_retriever():
     global _retriever_instance
