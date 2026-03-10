@@ -86,6 +86,7 @@ class KnowledgeRetriever:
                 "similarity_score": 0.0,
                 "type": "image",
                 "media_url": meta.get("media_url", ""),
+                "object_key": meta.get("object_key", ""),
             })
         return siblings
 
@@ -158,7 +159,9 @@ class KnowledgeRetriever:
                 "similarity_score": c["score"],
                 "type": c["meta"].get("type", "knowledge_entry"),
                 "media_url": c["meta"].get("media_url", ""),
+                "object_key": c["meta"].get("object_key", ""),
                 "table_image_url": c["meta"].get("table_image_url", ""),
+                "table_image_object_key": c["meta"].get("table_image_object_key", ""),
             })
 
             if c["meta"].get("type") == "image":

@@ -33,6 +33,29 @@ def _replace_inline_placeholders(text: str, mapping: dict) -> str:
     return text
 
 
+def _refresh_media_urls(context: list, media_store) -> list:
+    """用 object_key 为每条检索结果重新生成预签名 URL，避免 7 天过期失效"""
+    if not media_store:
+        return context
+    for item in context:
+        try:
+            if item.get("type") == "image" and item.get("object_key"):
+                fresh = media_store.refresh_url(item["object_key"])
+                item["media_url"] = fresh
+                try:
+                    data = json.loads(item.get("content", "{}"))
+                    if "url" in data:
+                        data["url"] = fresh
+                        item["content"] = json.dumps(data, ensure_ascii=False)
+                except Exception:
+                    pass
+            if item.get("table_image_object_key"):
+                item["table_image_url"] = media_store.refresh_url(item["table_image_object_key"])
+        except Exception as e:
+            print(f"⚠️ URL 刷新失败 [{item.get('id', '')}]: {e}")
+    return context
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """服务生命周期管理"""
@@ -157,6 +180,8 @@ async def chat_stream(req: ChatRequest):
         try:
             retriever = get_retriever()
             context, confidence = await asyncio.to_thread(retriever.retrieve, req.question)
+            from src.storage.object_store import get_media_store as _gms
+            context = _refresh_media_urls(context, _gms())
             parsed = parse_retrieved_results(context)
 
             full_answer = ""
@@ -202,6 +227,8 @@ async def chat(req: ChatRequest):
 
     retriever = get_retriever()
     context, confidence = retriever.retrieve(req.question)
+    from src.storage.object_store import get_media_store as _gms
+    context = _refresh_media_urls(context, _gms())
     parsed = parse_retrieved_results(context)
 
     result = await generate_multimodal_answer(
@@ -430,19 +457,24 @@ async def import_document_file(file: UploadFile = File(...), _=Depends(require_a
                     placeholder_map[img["placeholder_id"]] = f"[{img.get('caption') or '图示'}]"
 
         table_image_urls = []
+        table_image_object_keys = []
         if table_images and media_store:
             for i, img_bytes in enumerate(table_images):
                 if img_bytes:
                     try:
                         upload_result = media_store.upload_bytes(img_bytes, f"table_{i+1:03d}.png")
                         table_image_urls.append(upload_result["url"])
+                        table_image_object_keys.append(upload_result["object_key"])
                     except Exception as e:
                         print(f"⚠️ 表格图片上传失败 [table_{i+1:03d}]: {e}")
                         table_image_urls.append(None)
+                        table_image_object_keys.append(None)
                 else:
                     table_image_urls.append(None)
+                    table_image_object_keys.append(None)
         else:
             table_image_urls = [None] * len(table_images) if table_images else []
+            table_image_object_keys = [None] * len(table_images) if table_images else []
 
         text_chunks = split_texts(texts)
         if placeholder_map:
@@ -457,6 +489,7 @@ async def import_document_file(file: UploadFile = File(...), _=Depends(require_a
             tables=tables,
             table_summaries=table_summaries,
             table_image_urls=table_image_urls,
+            table_image_object_keys=table_image_object_keys,
             images=[],
             image_descriptions=[],
             source_file=file.filename,

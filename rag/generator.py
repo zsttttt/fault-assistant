@@ -84,9 +84,9 @@ async def _call_qwen(messages: list) -> str:
                 "Content-Type": "application/json"
             },
             json={
-                "model": "qwen-turbo",
+                "model": "qwen3-max",
                 "messages": messages,
-                "max_tokens": 1024,
+                "max_tokens": 4096,
                 "temperature": 0.7
             }
         )
@@ -131,7 +131,7 @@ async def _call_claude(messages: list) -> str:
             },
             json={
                 "model": "claude-sonnet-4-20250514",
-                "max_tokens": 1024,
+                "max_tokens": 4096,
                 "system": system,
                 "messages": user_messages
             }
@@ -241,9 +241,9 @@ async def _stream_qwen(messages: list) -> AsyncGenerator[str, None]:
                 "Content-Type": "application/json",
             },
             json={
-                "model": "qwen-turbo",
+                "model": "qwen3-max",
                 "messages": messages,
-                "max_tokens": 1024,
+                "max_tokens": 4096,
                 "temperature": 0.7,
                 "stream": True,
             },
