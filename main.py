@@ -18,6 +18,7 @@ import tempfile
 import os
 
 from config import HOST, PORT, DEBUG, ADMIN_PASSWORD, USER_USERNAME, USER_PASSWORD
+from src.context.version_state import get_session_version, set_session_version, detect_version_in_text
 from database import init_db, save_conversation, update_feedback, get_unsolved_issues, add_knowledge, get_all_knowledge, import_from_excel, preview_excel, get_excel_sheets
 from rag import get_retriever, reload_retriever
 from src.retrieval.result_parser import parse_retrieved_results
@@ -31,6 +32,26 @@ def _replace_inline_placeholders(text: str, mapping: dict) -> str:
     for pid, replacement in mapping.items():
         text = text.replace(f"[[IMG:{pid}]]", replacement)
     return text
+
+
+def _clean_search_query(question: str, version_code: str) -> str:
+    """从用户问题中移除版本号描述，避免版本信息污染语义检索向量。
+    版本过滤由 Qdrant Filter 负责，检索向量只需包含实际问题内容。
+    """
+    import re
+    q = question
+    if version_code:
+        # 移除 "版本号为/是 XXXX"、"程序版本XXXX" 等句式及版本号本身
+        escaped = re.escape(version_code)
+        q = re.sub(
+            r'(程序|软件|固件|产品)?\s*(版本号?|version)\s*[为是：:\s]\s*' + escaped,
+            '', q, flags=re.IGNORECASE
+        )
+        # 兜底：直接移除孤立的版本号字符串
+        q = re.sub(r'(?<![.\d])' + escaped + r'(?![.\d])', '', q)
+    # 清理首尾多余标点
+    q = re.sub(r'^[\s，。！？,.\-]+|[\s，。！？,.\-]+$', '', q)
+    return q if q.strip() else question
 
 
 def _refresh_media_urls(context: list, media_store) -> list:
@@ -96,6 +117,7 @@ class ChatRequest(BaseModel):
     question: str
     device_model: Optional[str] = None
     session_id: Optional[str] = None  # 多轮对话会话 ID，不传则为单轮
+    version_code: Optional[str] = None  # 用户当前版本号，不传则从会话状态读取
 
 class ChatResponse(BaseModel):
     answer: str
@@ -124,6 +146,19 @@ class AdminAuthRequest(BaseModel):
 
 class BatchDeleteRequest(BaseModel):
     ids: List[str]
+
+class VersionCreateRequest(BaseModel):
+    version_code: str
+    version_name: Optional[str] = ""
+    is_base: bool
+    base_version_code: Optional[str] = None
+    doc_type_label: Optional[str] = ""
+
+class VersionUpdateRequest(BaseModel):
+    version_name: Optional[str] = None
+    is_base: Optional[bool] = None
+    base_version_code: Optional[str] = None
+    doc_type_label: Optional[str] = None
 
 
 # ==================== Auth 依赖 ====================
@@ -178,8 +213,45 @@ async def chat_stream(req: ChatRequest):
 
     async def event_stream():
         try:
+            # 版本确认前置
+            effective_version = req.version_code or ""
+            if req.session_id:
+                detected = detect_version_in_text(req.question)
+                if detected:
+                    set_session_version(req.session_id, detected)
+                    effective_version = detected
+                elif not effective_version:
+                    effective_version = get_session_version(req.session_id)
+
+            if req.session_id and not effective_version:
+                from database.version_registry import get_all_versions
+                version_list = [v["version_code"] for v in get_all_versions()]
+                hint = "请问您使用的是哪个版本？"
+                if version_list:
+                    hint += f"可选版本：{', '.join(version_list)}"
+                yield f"data: {json.dumps({'content': hint}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'done': True, 'conversation_id': str(uuid.uuid4()), 'confidence': 'low', 'media': {'images': [], 'videos': []}}, ensure_ascii=False)}\n\n"
+                return
+
+            if req.session_id and effective_version:
+                from database.version_registry import get_version as _gv, get_all_versions as _gav
+                if _gv(effective_version) is None:
+                    version_list = [v["version_code"] for v in _gav()]
+                    hint = f"版本「{effective_version}」暂未录入系统，请确认版本号是否正确。"
+                    if version_list:
+                        hint += f"当前已录入版本：{', '.join(version_list)}"
+                    set_session_version(req.session_id, "")
+                    yield f"data: {json.dumps({'content': hint}, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'done': True, 'conversation_id': str(uuid.uuid4()), 'confidence': 'low', 'media': {'images': [], 'videos': []}}, ensure_ascii=False)}\n\n"
+                    return
+                set_session_version(req.session_id, effective_version)
+
             retriever = get_retriever()
-            context, confidence = await asyncio.to_thread(retriever.retrieve, req.question)
+            search_query = _clean_search_query(req.question, effective_version)
+            print(f"[CHAT/STREAM] effective_version={effective_version!r}  search_query={search_query!r}", flush=True)
+            context, confidence = await asyncio.to_thread(
+                lambda: retriever.retrieve(search_query, version_code=effective_version)
+            )
             from src.storage.object_store import get_media_store as _gms
             context = _refresh_media_urls(context, _gms())
             parsed = parse_retrieved_results(context)
@@ -225,8 +297,38 @@ async def chat(req: ChatRequest):
     if not req.question.strip():
         raise HTTPException(status_code=400, detail="问题不能为空")
 
+    # 版本确认前置
+    effective_version = req.version_code or ""
+    if req.session_id:
+        detected = detect_version_in_text(req.question)
+        if detected:
+            set_session_version(req.session_id, detected)
+            effective_version = detected
+        elif not effective_version:
+            effective_version = get_session_version(req.session_id)
+
+    if req.session_id and not effective_version:
+        from database.version_registry import get_all_versions
+        version_list = [v["version_code"] for v in get_all_versions()]
+        hint = "请问您使用的是哪个版本？"
+        if version_list:
+            hint += f"可选版本：{', '.join(version_list)}"
+        return ChatResponse(answer=hint, conversation_id=str(uuid.uuid4()), confidence="low", media=None)
+
+    if req.session_id and effective_version:
+        from database.version_registry import get_version as _gv, get_all_versions as _gav
+        if _gv(effective_version) is None:
+            version_list = [v["version_code"] for v in _gav()]
+            hint = f"版本「{effective_version}」暂未录入系统，请确认版本号是否正确。"
+            if version_list:
+                hint += f"当前已录入版本：{', '.join(version_list)}"
+            set_session_version(req.session_id, "")
+            return ChatResponse(answer=hint, conversation_id=str(uuid.uuid4()), confidence="low", media=None)
+        set_session_version(req.session_id, effective_version)
+
     retriever = get_retriever()
-    context, confidence = retriever.retrieve(req.question)
+    search_query = _clean_search_query(req.question, effective_version)
+    context, confidence = retriever.retrieve(search_query, version_code=effective_version)
     from src.storage.object_store import get_media_store as _gms
     context = _refresh_media_urls(context, _gms())
     parsed = parse_retrieved_results(context)
@@ -571,6 +673,77 @@ async def chat_with_media(
     finally:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
+
+
+# ==================== 版本管理接口 ====================
+
+@app.get("/api/admin/versions")
+async def list_versions(_=Depends(require_admin)):
+    """获取所有版本列表"""
+    from database.version_registry import get_all_versions
+    return {"items": get_all_versions()}
+
+
+@app.get("/api/admin/versions/{version_code}")
+async def get_version(version_code: str, _=Depends(require_admin)):
+    """查询单个版本"""
+    from database.version_registry import get_version as _get_version
+    record = _get_version(version_code)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"版本 {version_code} 不存在")
+    return record
+
+
+@app.post("/api/admin/versions")
+async def create_version(req: VersionCreateRequest, _=Depends(require_admin)):
+    """新增版本"""
+    from database.version_registry import create_version as _create_version
+    try:
+        record = _create_version(
+            version_code=req.version_code,
+            is_base=req.is_base,
+            version_name=req.version_name or "",
+            base_version_code=req.base_version_code,
+            doc_type_label=req.doc_type_label or "",
+        )
+        return {"status": "ok", "item": record}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/admin/versions/{version_code}")
+async def update_version(version_code: str, req: VersionUpdateRequest, _=Depends(require_admin)):
+    """修改版本信息"""
+    from database.version_registry import update_version as _update_version
+    try:
+        record = _update_version(
+            version_code=version_code,
+            version_name=req.version_name,
+            is_base=req.is_base,
+            base_version_code=req.base_version_code,
+            doc_type_label=req.doc_type_label,
+        )
+        if record is None:
+            raise HTTPException(status_code=404, detail=f"版本 {version_code} 不存在")
+        return {"status": "ok", "item": record}
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/admin/versions/{version_code}")
+async def delete_version(version_code: str, _=Depends(require_admin)):
+    """删除版本记录"""
+    from database.version_registry import delete_version as _delete_version
+    deleted = _delete_version(version_code)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"版本 {version_code} 不存在")
+    return {"status": "ok"}
 
 
 if __name__ == "__main__":

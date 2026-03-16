@@ -41,6 +41,19 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS version_registry (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            version_code TEXT UNIQUE NOT NULL,
+            version_name TEXT DEFAULT '',
+            is_base INTEGER NOT NULL DEFAULT 0,
+            base_version_code TEXT,
+            doc_type_label TEXT DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     
     conn.commit()
     conn.close()
