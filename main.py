@@ -218,8 +218,15 @@ async def chat_stream(req: ChatRequest):
             if req.session_id:
                 detected = detect_version_in_text(req.question)
                 if detected:
-                    set_session_version(req.session_id, detected)
-                    effective_version = detected
+                    from database.version_registry import get_version as _gv_check
+                    if _gv_check(detected) is not None:
+                        # 已注册的版本号：更新会话
+                        set_session_version(req.session_id, detected)
+                        effective_version = detected
+                    else:
+                        # 未注册的数字串（可能是参数代码等）：有现有版本则保留，无则保留 detected 触发"未录入"提示
+                        existing = effective_version or get_session_version(req.session_id)
+                        effective_version = existing or detected
                 elif not effective_version:
                     effective_version = get_session_version(req.session_id)
 
@@ -302,8 +309,13 @@ async def chat(req: ChatRequest):
     if req.session_id:
         detected = detect_version_in_text(req.question)
         if detected:
-            set_session_version(req.session_id, detected)
-            effective_version = detected
+            from database.version_registry import get_version as _gv_check
+            if _gv_check(detected) is not None:
+                set_session_version(req.session_id, detected)
+                effective_version = detected
+            else:
+                existing = effective_version or get_session_version(req.session_id)
+                effective_version = existing or detected
         elif not effective_version:
             effective_version = get_session_version(req.session_id)
 
