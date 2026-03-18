@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="zh-CN" id="htmlRoot">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>故障助手</title>
+<script src="/static/marked.min.js"></script>
+<style>
+:root {
+  --bg: #0f172a;
+  --surface: #1e293b;
+  --surface2: #273348;
+  --border: #334155;
+  --accent: #3b82f6;
+  --accent-dim: rgba(59,130,246,0.12);
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --user-bg: #2563eb;
+  --ai-bg: #1e293b;
+  --high: #10b981;
+  --med: #f59e0b;
+  --low: #ef4444;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text)}
+/* ---- layout ---- */
+body{display:flex;height:100vh}
+.sidebar{width:0;overflow:hidden;transition:width .3s;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
+.sidebar.open{width:290px}
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+/* ---- sidebar ---- */
+.sb-head{padding:14px 16px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;color:var(--muted);letter-spacing:.5px}
+.test-list{flex:1;overflow-y:auto;padding:8px}
+.test-item{padding:10px 12px;border-radius:8px;cursor:pointer;font-size:13px;color:var(--muted);margin-bottom:4px;border:1px solid transparent;transition:all .2s;line-height:1.5}
+.test-item b{display:block;color:var(--text);margin-bottom:2px;font-size:12px}
+.test-item:hover{background:var(--accent-dim);border-color:rgba(59,130,246,.3);color:var(--text)}
+/* ---- header ---- */
+.header{display:flex;align-items:center;gap:10px;padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0}
+.toggle-btn{background:none;border:1px solid var(--border);color:var(--muted);padding:5px 10px;border-radius:6px;cursor:pointer;font-size:13px;transition:all .2s;white-space:nowrap}
+.toggle-btn:hover{color:var(--text);background:rgba(255,255,255,.05)}
+.h-title{font-size:16px;font-weight:700;display:flex;align-items:center;gap:6px}
+.h-right{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
+.sess-id{font-family:monospace;background:rgba(255,255,255,.06);padding:2px 8px;border-radius:4px;font-size:11px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.new-btn{background:none;border:1px solid var(--border);color:var(--muted);padding:4px 8px;border-radius:4px;cursor:pointer;font-size:12px;transition:all .2s}
+.new-btn:hover{color:var(--text)}
+.lang-btn{background:none;border:1px solid var(--border);color:var(--muted);padding:4px 8px;border-radius:4px;cursor:pointer;font-size:12px;transition:all .2s;font-weight:600}
+.lang-btn:hover{color:var(--text);border-color:var(--accent)}
+/* ---- messages ---- */
+.msgs{flex:1;overflow-y:auto;padding:20px 16px;display:flex;flex-direction:column;gap:18px}
+.welcome{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--muted);text-align:center;gap:10px;pointer-events:none}
+.welcome-icon{font-size:52px}
+.welcome h2{font-size:20px;color:var(--text)}
+.welcome p{font-size:14px;max-width:380px;line-height:1.7}
+/* ---- message bubble ---- */
+.msg{display:flex;gap:10px;max-width:820px;animation:fadeIn .2s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.msg.user{align-self:flex-end;flex-direction:row-reverse}
+.msg.ai{align-self:flex-start}
+.avatar{width:34px;height:34px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:16px;background:var(--surface2)}
+.msg.user .avatar{background:var(--user-bg)}
+.bubble{padding:12px 15px;border-radius:14px;font-size:14px;line-height:1.7;max-width:660px;word-break:break-word}
+.msg.user .bubble{background:var(--user-bg);color:#fff;border-bottom-right-radius:4px}
+.msg.ai .bubble{background:var(--ai-bg);border:1px solid var(--border);border-bottom-left-radius:4px}
+/* markdown inside bubble */
+.bubble h1,.bubble h2,.bubble h3{margin:.6em 0 .3em;font-size:1em;font-weight:700}
+.bubble p{margin:.3em 0}
+.bubble ul,.bubble ol{margin:.3em 0 .3em 1.4em}
+.bubble li{margin:.15em 0}
+.bubble code{background:rgba(0,0,0,.3);padding:1px 5px;border-radius:4px;font-family:monospace;font-size:13px}
+.bubble pre{background:rgba(0,0,0,.35);padding:10px 12px;border-radius:6px;overflow-x:auto;margin:.5em 0}
+.bubble pre code{background:none;padding:0}
+.bubble strong{font-weight:700}
+.bubble hr{border:none;border-top:1px solid var(--border);margin:.5em 0}
+/* confidence tag */
+.conf{display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:3px 8px;border-radius:10px;margin-top:8px}
+.conf.high{background:rgba(16,185,129,.15);color:#10b981}
+.conf.med{background:rgba(245,158,11,.15);color:#f59e0b}
+.conf.low{background:rgba(239,68,68,.15);color:#ef4444}
+/* cursor blink */
+.cursor{display:inline-block;width:2px;height:.9em;background:var(--text);animation:blink .8s step-end infinite;vertical-align:text-bottom;margin-left:2px}
+@keyframes blink{50%{opacity:0}}
+/* thinking dot */
+.thinking{display:flex;gap:5px;padding:4px 0}
+.thinking span{width:7px;height:7px;border-radius:50%;background:var(--muted);animation:dot 1.2s ease-in-out infinite}
+.thinking span:nth-child(2){animation-delay:.2s}
+.thinking span:nth-child(3){animation-delay:.4s}
+@keyframes dot{0%,80%,100%{opacity:.2;transform:scale(.9)}40%{opacity:1;transform:scale(1.1)}}
+/* ---- input area ---- */
+.input-area{padding:12px 16px;background:var(--surface);border-top:1px solid var(--border);flex-shrink:0}
+.device-row{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.device-label{font-size:12px;color:var(--muted);white-space:nowrap}
+.device-input{background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 10px;border-radius:6px;font-size:13px;outline:none;width:180px}
+.device-input:focus{border-color:var(--accent)}
+.input-row{display:flex;gap:8px;align-items:flex-end}
+textarea{flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:10px;font-size:14px;resize:none;outline:none;font-family:inherit;line-height:1.6;max-height:180px;min-height:44px;transition:border-color .2s}
+textarea:focus{border-color:var(--accent)}
+textarea::placeholder{color:var(--muted)}
+.send-btn{background:var(--accent);border:none;color:#fff;padding:10px 20px;border-radius:10px;cursor:pointer;font-size:14px;font-weight:500;transition:opacity .2s;white-space:nowrap;height:44px}
+.send-btn:hover{opacity:.85}
+.send-btn:disabled{opacity:.4;cursor:not-allowed}
+/* scrollbar */
+::-webkit-scrollbar{width:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+/* ---- login overlay ---- */
+#loginOverlay{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:999}
+.login-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:40px 36px;width:340px;text-align:center}
+.login-card h2{font-size:20px;font-weight:700;margin-bottom:6px}
+.login-card p{font-size:13px;color:var(--muted);margin-bottom:28px}
+.login-field{width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:8px;font-size:14px;outline:none;margin-bottom:14px}
+.login-field:focus{border-color:var(--accent)}
+.login-btn{width:100%;background:var(--accent);border:none;color:#fff;padding:11px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;transition:opacity .2s}
+.login-btn:hover{opacity:.85}
+.login-btn:disabled{opacity:.4;cursor:not-allowed}
+.login-error{color:#ef4444;font-size:13px;margin-top:10px;min-height:18px}
+</style>
+</head>
+<body>
+
+<!-- Login overlay -->
+<div id="loginOverlay" style="display:none">
+  <div class="login-card">
+    <h2 data-i18n="loginTitle"> 故障助手</h2>
+    <p data-i18n="loginSubtitle">请登录以继续使用</p>
+    <input type="text" id="loginUser" class="login-field" data-i18n-placeholder="loginUserPlaceholder" placeholder="用户名" autocomplete="username">
+    <input type="password" id="loginPwd" class="login-field" data-i18n-placeholder="loginPwdPlaceholder" placeholder="密码" autocomplete="current-password">
+    <button class="login-btn" id="loginBtn" onclick="doLogin()" data-i18n="loginBtn">登录</button>
+    <div class="login-error" id="loginError"></div>
+  </div>
+</div>
+
+<!-- Sidebar: Test cases -->
+<div class="sidebar" id="sidebar">
+  <div class="sb-head" data-i18n="sidebarTitle">📋 接口测试用例</div>
+  <div class="test-list" id="testList"></div>
+</div>
+
+<!-- Main -->
+<div class="main">
+  <div class="header">
+    <button class="toggle-btn" onclick="toggleSidebar()" data-i18n="toggleBtn">☰ 测试用例</button>
+    <div class="h-title" data-i18n="headerTitle"> 故障助手</div>
+    <div class="h-right">
+      <span data-i18n="sessionLabel">会话：</span>
+      <span class="sess-id" id="sessDisplay" title="当前会话 ID"></span>
+      <button class="new-btn" onclick="newSession()" data-i18n="newSessionBtn">↺ 新会话</button>
+      <button class="lang-btn" id="langBtn" onclick="toggleLang()">EN</button>
+    </div>
+  </div>
+
+  <div class="msgs" id="msgs">
+    <div class="welcome" id="welcome">
+      <div class="welcome-icon">🔧</div>
+      <h2 data-i18n="welcomeTitle">故障诊断助手</h2>
+      <p data-i18n="welcomeDesc">描述设备故障现象，或输入错误码（如 E02），我来帮您分析和排查。</p>
+    </div>
+  </div>
+
+  <div class="input-area">
+    <div class="device-row">
+      <span class="device-label" data-i18n="deviceLabel">设备型号：</span>
+      <input type="text" class="device-input" id="deviceModel" data-i18n-placeholder="devicePlaceholder" placeholder="可选，如 LX-500">
+      <span class="device-label" data-i18n="versionLabel">版本号：</span>
+      <input type="text" class="device-input" id="versionCode" data-i18n-placeholder="versionPlaceholder" placeholder="可选，如 110101">
+    </div>
+    <div class="input-row">
+      <textarea id="inputBox" rows="1" data-i18n-placeholder="inputPlaceholder" placeholder="输入故障描述或错误码… Enter 发送，Shift+Enter 换行"></textarea>
+      <button class="send-btn" id="sendBtn" onclick="sendMessage()" data-i18n="sendBtn">发送</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---- i18n ----
+const TRANSLATIONS = {
+  zh: {
+    pageTitle: '故障助手',
+    langBtn: 'EN',
+    loginTitle: ' 故障助手',
+    loginSubtitle: '请登录以继续使用',
+    loginUserPlaceholder: '用户名',
+    loginPwdPlaceholder: '密码',
+    loginBtn: '登录',
+    loginErrEmpty: '请输入用户名和密码',
+    loginErrWrong: '用户名或密码错误',
+    loginErrNetwork: '网络错误，请稍后重试',
+    sidebarTitle: '📋 接口测试用例',
+    toggleBtn: '☰ 测试用例',
+    headerTitle: ' 故障助手',
+    sessionLabel: '会话：',
+    newSessionBtn: '↺ 新会话',
+    welcomeTitle: '故障诊断助手',
+    welcomeDesc: '描述设备故障现象，或输入错误码（如 E02），我来帮您分析和排查。',
+    deviceLabel: '设备型号：',
+    devicePlaceholder: '可选，如 LX-500',
+    versionLabel: '版本号：',
+    versionPlaceholder: '可选，如 110101',
+    inputPlaceholder: '输入故障描述或错误码… Enter 发送，Shift+Enter 换行',
+    sendBtn: '发送',
+    confHigh: '高置信',
+    confMed: '中置信',
+    confLow: '低置信',
+    errPrefix: '错误: ',
+    noContent: '无内容返回',
+    reqFailed: '请求失败: ',
+    refTable: '📋 参考表格',
+  },
+  en: {
+    pageTitle: 'Fault Assistant',
+    langBtn: '中文',
+    loginTitle: ' Fault Assistant',
+    loginSubtitle: 'Please log in to continue',
+    loginUserPlaceholder: 'Username',
+    loginPwdPlaceholder: 'Password',
+    loginBtn: 'Login',
+    loginErrEmpty: 'Please enter username and password',
+    loginErrWrong: 'Incorrect username or password',
+    loginErrNetwork: 'Network error, please try again',
+    sidebarTitle: '📋 Test Cases',
+    toggleBtn: '☰ Test Cases',
+    headerTitle: ' Fault Assistant',
+    sessionLabel: 'Session:',
+    newSessionBtn: '↺ New Session',
+    welcomeTitle: 'Fault Diagnosis Assistant',
+    welcomeDesc: 'Describe the device fault or enter an error code (e.g. E02) and I will help you analyze and troubleshoot.',
+    deviceLabel: 'Device Model:',
+    devicePlaceholder: 'Optional, e.g. LX-500',
+    versionLabel: 'Version:',
+    versionPlaceholder: 'Optional, e.g. 110101',
+    inputPlaceholder: 'Enter fault description or error code… Enter to send, Shift+Enter for new line',
+    sendBtn: 'Send',
+    confHigh: 'High Confidence',
+    confMed: 'Med Confidence',
+    confLow: 'Low Confidence',
+    errPrefix: 'Error: ',
+    noContent: 'No content returned',
+    reqFailed: 'Request failed: ',
+    refTable: '📋 Reference Tables',
+  },
+};
+
+let currentLang = localStorage.getItem('fa_lang') || 'zh';
+
+function t(key) {
+  return (TRANSLATIONS[currentLang] || TRANSLATIONS.zh)[key] || key;
+}
+
+function applyI18n() {
+  document.documentElement.lang = currentLang === 'zh' ? 'zh-CN' : 'en';
+  document.title = t('pageTitle');
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.getAttribute('data-i18n');
+    const val = t(key);
+    if (val) el.textContent = val;
+  });
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+    const key = el.getAttribute('data-i18n-placeholder');
+    const val = t(key);
+    if (val) el.placeholder = val;
+  });
+  renderTestList();
+}
+
+function toggleLang() {
+  currentLang = currentLang === 'zh' ? 'en' : 'zh';
+  localStorage.setItem('fa_lang', currentLang);
+  applyI18n();
+}
+
+// ---- test cases ----
+const TEST_CASES = {
+  zh: [
+    { label: 'E02 开机无交易',   q: '加油机出现E02，开机后60秒内没有加油交易，请问是什么原因？' },
+    { label: 'E03 加油中断',     q: '加油过程中出现E03故障，加油中60秒无交易怎么处理？' },
+    { label: '显示屏不亮',       q: '加油机显示屏完全不亮，无法正常开机，如何排查？' },
+    { label: '打印机无法打印',   q: '加油机无法打印小票，打印机出现故障，如何解决？' },
+    { label: '流量计异常',       q: '流量计数据异常，计量不准确，有哪些排查步骤？' },
+    { label: '充电桩无法启动',   q: '充电桩无法正常启动充电，请问如何排查？' },
+    { label: '通信中断',         q: '加油机与后台通信中断，网络连接故障如何处理？' },
+    { label: '电机报警',         q: '加油机电机出现报警，无法正常运行，请问原因和解决方法？' },
+  ],
+  en: [
+    { label: 'E02 No Startup Transaction',  q: 'Fuel dispenser shows E02, no fueling transaction within 60 seconds of startup. What is the reason?' },
+    { label: 'E03 Fueling Interrupted',     q: 'E03 fault during fueling, no transaction for 60 seconds while fueling. How to handle?' },
+    { label: 'Display Not Working',         q: 'Fuel dispenser display is completely off, cannot start normally. How to troubleshoot?' },
+    { label: 'Printer Not Printing',        q: 'Fuel dispenser cannot print receipts. Printer is malfunctioning. How to fix?' },
+    { label: 'Flow Meter Abnormal',         q: 'Flow meter data is abnormal, measurement is inaccurate. What are the troubleshooting steps?' },
+    { label: 'Charger Cannot Start',        q: 'EV charger cannot start charging normally. How to troubleshoot?' },
+    { label: 'Communication Interrupted',   q: 'Fuel dispenser lost communication with backend, network connection failure. How to handle?' },
+    { label: 'Motor Alarm',                 q: 'Fuel dispenser motor alarm, cannot operate normally. What are the causes and solutions?' },
+  ],
+};
+
+marked.setOptions({ breaks: true, gfm: true });
+
+function renderMd(text) {
+  const div = document.createElement('div');
+  div.innerHTML = marked.parse(text);
+  div.querySelectorAll('a').forEach(a => {
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+  });
+  div.querySelectorAll('img').forEach(img => {
+    img.style.cssText = 'max-width:100%;border-radius:8px;margin:.5em 0;display:block';
+  });
+  return div.innerHTML;
+}
+
+let sessionId = genUUID();
+let streaming = false;
+
+function genUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
+
+function updateSessionDisplay() {
+  document.getElementById('sessDisplay').textContent = sessionId.substring(0, 8) + '…';
+  document.getElementById('sessDisplay').title = sessionId;
+}
+
+function newSession() {
+  sessionId = genUUID();
+  updateSessionDisplay();
+  const msgs = document.getElementById('msgs');
+  msgs.innerHTML = `
+    <div class="welcome" id="welcome">
+      <div class="welcome-icon">🔧</div>
+      <h2>${t('welcomeTitle')}</h2>
+      <p>${t('welcomeDesc')}</p>
+    </div>`;
+}
+
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+}
+
+// ---- test list ----
+function renderTestList() {
+  const list = document.getElementById('testList');
+  list.innerHTML = '';
+  const cases = TEST_CASES[currentLang] || TEST_CASES.zh;
+  cases.forEach(tc => {
+    const div = document.createElement('div');
+    div.className = 'test-item';
+    div.innerHTML = `<b>${tc.label}</b>${tc.q}`;
+    div.onclick = () => {
+      document.getElementById('inputBox').value = tc.q;
+      if (document.getElementById('sidebar').classList.contains('open')) {
+        toggleSidebar();
+      }
+      sendMessage();
+    };
+    list.appendChild(div);
+  });
+}
+
+// ---- user login ----
+const USER_SESSION_KEY = 'user_authed';
+
+async function doLogin() {
+  const username = document.getElementById('loginUser').value.trim();
+  const password = document.getElementById('loginPwd').value;
+  const btn = document.getElementById('loginBtn');
+  const err = document.getElementById('loginError');
+  if (!username || !password) { err.textContent = t('loginErrEmpty'); return; }
+  btn.disabled = true;
+  err.textContent = '';
+  try {
+    const res = await fetch('/api/user/auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    if (res.ok) {
+      sessionStorage.setItem(USER_SESSION_KEY, '1');
+      document.getElementById('loginOverlay').style.display = 'none';
+    } else {
+      err.textContent = t('loginErrWrong');
+    }
+  } catch {
+    err.textContent = t('loginErrNetwork');
+  }
+  btn.disabled = false;
+}
+
+(function checkAuth() {
+  if (!sessionStorage.getItem(USER_SESSION_KEY)) {
+    document.getElementById('loginOverlay').style.display = 'flex';
+  }
+  document.getElementById('loginPwd')?.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+  document.getElementById('loginUser')?.addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('loginPwd').focus(); });
+})();
+
+// ---- add message ----
+function addUserMsg(text) {
+  const welcome = document.getElementById('welcome');
+  if (welcome) welcome.remove();
+  const msgs = document.getElementById('msgs');
+  const div = document.createElement('div');
+  div.className = 'msg user';
+  div.innerHTML = `
+    <div class="avatar">👤</div>
+    <div class="bubble">${escHtml(text)}</div>`;
+  msgs.appendChild(div);
+  scrollBottom();
+}
+
+function addAiMsg() {
+  const msgs = document.getElementById('msgs');
+  const div = document.createElement('div');
+  div.className = 'msg ai';
+  const avatar = document.createElement('div');
+  avatar.className = 'avatar';
+  avatar.textContent = '🤖';
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  bubble.innerHTML = '<div class="thinking"><span></span><span></span><span></span></div>';
+  div.appendChild(avatar);
+  div.appendChild(bubble);
+  msgs.appendChild(div);
+  scrollBottom();
+  return bubble;
+}
+
+function setConfTag(bubble, level) {
+  const labels = {
+    high: ['high', t('confHigh')],
+    med:  ['med',  t('confMed')],
+    low:  ['low',  t('confLow')],
+  };
+  const [cls, text] = labels[level] || labels.low;
+  let tag = bubble.querySelector('.conf');
+  if (!tag) {
+    tag = document.createElement('div');
+    bubble.appendChild(tag);
+  }
+  tag.className = `conf ${cls}`;
+  tag.innerHTML = `● ${text}`;
+}
+
+function scrollBottom() {
+  const msgs = document.getElementById('msgs');
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function escHtml(t) {
+  return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+}
+
+// ---- send ----
+async function sendMessage() {
+  if (streaming) return;
+  const input = document.getElementById('inputBox');
+  const question = input.value.trim();
+  if (!question) return;
+  const deviceModel = document.getElementById('deviceModel').value.trim();
+  const versionCode = document.getElementById('versionCode').value.trim();
+
+  input.value = '';
+  input.style.height = 'auto';
+  streaming = true;
+  document.getElementById('sendBtn').disabled = true;
+
+  addUserMsg(question);
+  const bubble = addAiMsg();
+
+  let rawText = '';
+  let firstChunk = true;
+  let contentSpan = null;
+
+  try {
+    const res = await fetch('/api/chat/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        question,
+        device_model: deviceModel || null,
+        session_id: sessionId,
+        version_code: versionCode || null,
+      }),
+    });
+
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const raw = line.slice(6).trim();
+        if (!raw) continue;
+        try {
+          const ev = JSON.parse(raw);
+
+          if (ev.error) {
+            bubble.innerHTML = `<span style="color:var(--low)">${t('errPrefix')}${escHtml(ev.error)}</span>`;
+            break;
+          }
+
+          if (ev.content) {
+            if (firstChunk) {
+              bubble.innerHTML = '';
+              contentSpan = document.createElement('span');
+              const cursor = document.createElement('span');
+              cursor.className = 'cursor';
+              bubble.appendChild(contentSpan);
+              bubble.appendChild(cursor);
+              firstChunk = false;
+            }
+            rawText += ev.content;
+            contentSpan.innerHTML = renderMd(rawText.replace(/!\[[^\]]*\]\([^)]*\)/g, ''));
+            scrollBottom();
+          }
+
+          if (ev.done) {
+            const media = ev.media || {};
+            const images = media.images || [];
+            const videos = media.videos || [];
+            const imgMap = {};
+            let mdText = rawText.replace(/\[图片(\d+)\]/g, (match, n) => {
+              const img = images[parseInt(n) - 1];
+              if (img && img.url) {
+                const key = `IMGPH${n}IMGPH`;
+                const alt = (img.description || '').replace(/"/g, '&quot;').replace(/\n/g, ' ');
+                imgMap[key] = `<img src="${img.url}" alt="${alt}" style="max-width:100%;border-radius:8px;margin:.5em 0;display:block">`;
+                return key;
+              }
+              return '';
+            });
+            mdText = mdText.replace(/\[视频(\d+)\]/g, (match, n) => {
+              const vid = videos[parseInt(n) - 1];
+              if (vid && vid.url) { return `[▶ Video${n}](${vid.url})`; }
+              return '';
+            });
+            {
+              let html = renderMd(mdText);
+              for (const [key, tag] of Object.entries(imgMap)) {
+                html = html.replaceAll(key, tag);
+              }
+              contentSpan.innerHTML = html;
+              scrollBottom();
+            }
+            const cur = bubble.querySelector('.cursor');
+            if (cur) cur.remove();
+            const confMap = { high: 'high', medium: 'med', low: 'low' };
+            setConfTag(bubble, confMap[ev.confidence] || 'low');
+
+            const tableImgs = ((ev.media || {}).table_images || []).filter(t => t && t.url);
+            if (tableImgs.length > 0) {
+              const sec = document.createElement('div');
+              sec.style.cssText = 'margin-top:.75em;border-top:1px solid rgba(255,255,255,.1);padding-top:.6em';
+              const label = document.createElement('div');
+              label.style.cssText = 'font-size:.72em;color:var(--muted);margin-bottom:.4em';
+              label.textContent = t('refTable');
+              sec.appendChild(label);
+              for (const timg of tableImgs) {
+                const img = document.createElement('img');
+                img.src = timg.url;
+                img.alt = timg.description || '';
+                img.style.cssText = 'max-width:100%;border-radius:6px;margin:.3em 0;display:block';
+                sec.appendChild(img);
+              }
+              bubble.appendChild(sec);
+            }
+          }
+        } catch {}
+      }
+    }
+  } catch (e) {
+    bubble.innerHTML = `<span style="color:var(--low)">${t('reqFailed')}${escHtml(e.message)}</span>`;
+  }
+
+  if (firstChunk) {
+    bubble.innerHTML = `<span style="color:var(--muted)">${t('noContent')}</span>`;
+  }
+  const cur = bubble.querySelector('.cursor');
+  if (cur) cur.remove();
+
+  streaming = false;
+  document.getElementById('sendBtn').disabled = false;
+  input.focus();
+}
+
+// ---- textarea auto-resize & Enter ----
+const ta = document.getElementById('inputBox');
+ta.addEventListener('input', function () {
+  this.style.height = 'auto';
+  this.style.height = Math.min(this.scrollHeight, 180) + 'px';
+});
+ta.addEventListener('keydown', function (e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+
+// ---- init ----
+applyI18n();
+updateSessionDisplay();
+</script>
+</body>
+</html>

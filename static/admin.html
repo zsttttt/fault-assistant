@@ -1,0 +1,1134 @@
+<!DOCTYPE html>
+<html lang="zh-CN" id="htmlRoot">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>故障助手 - 后台管理</title>
+<style>
+:root {
+  --bg: #0f172a;
+  --surface: #1e293b;
+  --surface2: #273348;
+  --border: #334155;
+  --accent: #3b82f6;
+  --accent-dim: rgba(59,130,246,0.12);
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --high: #10b981;
+  --med: #f59e0b;
+  --low: #ef4444;
+  --green: #10b981;
+  --red: #ef4444;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text)}
+
+/* ---- login overlay ---- */
+#loginOverlay{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:999}
+.login-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:40px 36px;width:340px;text-align:center}
+.login-card h2{font-size:20px;font-weight:700;margin-bottom:6px}
+.login-card p{font-size:13px;color:var(--muted);margin-bottom:28px}
+.login-input{width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:8px;font-size:14px;outline:none;margin-bottom:14px}
+.login-input:focus{border-color:var(--accent)}
+.login-btn{width:100%;background:var(--accent);border:none;color:#fff;padding:11px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;transition:opacity .2s}
+.login-btn:hover{opacity:.85}
+.login-btn:disabled{opacity:.4;cursor:not-allowed}
+.login-error{color:var(--red);font-size:13px;margin-top:10px;min-height:18px}
+
+/* ---- main layout ---- */
+#app{display:none;flex-direction:column;height:100vh}
+.header{display:flex;align-items:center;gap:12px;padding:12px 20px;background:var(--surface);border-bottom:1px solid var(--border)}
+.h-title{font-size:16px;font-weight:700}
+.h-badge{font-size:11px;background:var(--accent-dim);color:var(--accent);padding:3px 8px;border-radius:10px}
+.logout-btn{margin-left:auto;background:none;border:1px solid var(--border);color:var(--muted);padding:5px 12px;border-radius:6px;cursor:pointer;font-size:13px}
+.logout-btn:hover{color:var(--text)}
+.lang-btn{background:none;border:1px solid var(--border);color:var(--muted);padding:5px 10px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;transition:all .2s}
+.lang-btn:hover{color:var(--text);border-color:var(--accent)}
+
+/* ---- tabs ---- */
+.tabs{display:flex;gap:0;border-bottom:1px solid var(--border);background:var(--surface);padding:0 20px}
+.tab{padding:12px 18px;font-size:14px;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent;transition:all .2s;margin-bottom:-1px}
+.tab.active{color:var(--text);border-bottom-color:var(--accent);font-weight:600}
+.tab:hover:not(.active){color:var(--text)}
+
+/* ---- content ---- */
+.content{flex:1;overflow-y:auto;padding:24px 20px}
+
+/* ---- upload tab ---- */
+.drop-zone{border:2px dashed var(--border);border-radius:12px;padding:48px 20px;text-align:center;cursor:pointer;transition:all .2s;background:var(--surface)}
+.drop-zone:hover,.drop-zone.drag-over{border-color:var(--accent);background:var(--accent-dim)}
+.drop-icon{font-size:40px;margin-bottom:12px}
+.drop-text{font-size:15px;color:var(--text);margin-bottom:6px}
+.drop-sub{font-size:13px;color:var(--muted)}
+#fileInput{display:none}
+.upload-result{margin-top:20px;padding:16px 20px;border-radius:10px;font-size:14px;line-height:1.6}
+.upload-result.success{background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.3);color:var(--green)}
+.upload-result.error{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);color:var(--red)}
+.spinner{display:inline-block;width:16px;height:16px;border:2px solid rgba(255,255,255,.2);border-top-color:var(--text);border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:8px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ---- sheet modal ---- */
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:200;display:none}
+.modal-bg.show{display:flex}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:28px;min-width:300px}
+.modal h3{font-size:16px;font-weight:700;margin-bottom:16px}
+.sheet-list{display:flex;flex-direction:column;gap:8px;margin-bottom:20px}
+.sheet-item{padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:14px;transition:all .2s}
+.sheet-item:hover{border-color:var(--accent);background:var(--accent-dim)}
+.modal-cancel{background:none;border:1px solid var(--border);color:var(--muted);padding:8px 16px;border-radius:6px;cursor:pointer;font-size:13px}
+
+/* ---- knowledge tab ---- */
+.kb-header{display:flex;align-items:center;gap:12px;margin-bottom:20px}
+.kb-title{font-size:16px;font-weight:600}
+.add-btn{background:var(--accent);border:none;color:#fff;padding:7px 14px;border-radius:7px;cursor:pointer;font-size:13px;font-weight:500}
+.add-btn:hover{opacity:.85}
+.add-form{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:20px;margin-bottom:20px;display:none}
+.add-form.show{display:block}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+.form-group{display:flex;flex-direction:column;gap:6px}
+.form-group.full{grid-column:1/-1}
+.form-label{font-size:12px;color:var(--muted)}
+.form-input,.form-textarea{background:var(--bg);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:7px;font-size:13px;outline:none;font-family:inherit}
+.form-input:focus,.form-textarea:focus{border-color:var(--accent)}
+.form-textarea{resize:vertical;min-height:80px;line-height:1.5}
+.form-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:4px}
+.save-btn{background:var(--accent);border:none;color:#fff;padding:7px 18px;border-radius:7px;cursor:pointer;font-size:13px;font-weight:500}
+.cancel-btn{background:none;border:1px solid var(--border);color:var(--muted);padding:7px 14px;border-radius:7px;cursor:pointer;font-size:13px}
+.save-btn:hover{opacity:.85}
+.cancel-btn:hover{color:var(--text)}
+
+/* ---- knowledge table ---- */
+.kb-table{width:100%;border-collapse:collapse;font-size:13px}
+.kb-table th{text-align:left;padding:10px 12px;border-bottom:1px solid var(--border);color:var(--muted);font-weight:600;font-size:12px;white-space:nowrap}
+.kb-table td{padding:10px 12px;border-bottom:1px solid rgba(51,65,85,.5);vertical-align:top;line-height:1.5}
+.kb-table tr:hover td{background:rgba(255,255,255,.02)}
+.del-btn{background:none;border:1px solid rgba(239,68,68,.4);color:var(--red);padding:4px 10px;border-radius:5px;cursor:pointer;font-size:12px;transition:all .2s}
+.del-btn:hover{background:rgba(239,68,68,.12)}
+.empty-state{text-align:center;padding:60px 20px;color:var(--muted);font-size:14px}
+.loading-state{text-align:center;padding:40px;color:var(--muted);font-size:13px}
+.kb-check{width:15px;height:15px;cursor:pointer;accent-color:var(--accent);flex-shrink:0}
+.batch-bar{display:none;align-items:center;gap:10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 16px;margin-bottom:14px}
+.batch-bar.show{display:flex}
+.batch-count{font-size:13px;color:var(--muted);flex:1}
+.batch-del-btn{background:var(--red);border:none;color:#fff;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500}
+.batch-del-btn:hover{opacity:.85}
+.desel-btn{background:none;border:1px solid var(--border);color:var(--muted);padding:6px 12px;border-radius:6px;cursor:pointer;font-size:13px}
+.desel-btn:hover{color:var(--text)}
+
+/* ---- docs tab ---- */
+.docs-header{display:flex;align-items:center;gap:12px;margin-bottom:20px}
+.docs-title{font-size:16px;font-weight:600}
+.refresh-btn{background:none;border:1px solid var(--border);color:var(--muted);padding:6px 12px;border-radius:7px;cursor:pointer;font-size:13px;transition:all .2s}
+.refresh-btn:hover{color:var(--text);border-color:var(--accent)}
+.badge{display:inline-block;padding:2px 7px;border-radius:10px;font-size:11px;font-weight:600}
+.badge-text{background:rgba(59,130,246,.15);color:#60a5fa}
+.badge-table{background:rgba(245,158,11,.15);color:#fbbf24}
+.badge-img{background:rgba(16,185,129,.15);color:#34d399}
+
+/* ---- versions tab ---- */
+.badge-root{background:rgba(139,92,246,.15);color:#a78bfa}
+.badge-chain{background:rgba(59,130,246,.15);color:#60a5fa}
+.ver-chain-hint{font-size:11px;color:var(--muted);margin-top:6px;padding:8px 10px;background:var(--surface2);border-radius:6px;line-height:1.6}
+
+/* scrollbar */
+::-webkit-scrollbar{width:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+</style>
+</head>
+<body>
+
+<!-- Login -->
+<div id="loginOverlay">
+  <div class="login-card">
+    <h2 data-i18n="loginTitle">⚙️ 后台管理</h2>
+    <p data-i18n="loginSubtitle">请输入管理员密码以继续</p>
+    <input type="password" id="loginPwd" class="login-input" data-i18n-placeholder="loginPwdPlaceholder" placeholder="管理员密码" autocomplete="current-password">
+    <button class="login-btn" id="loginBtn" onclick="doLogin()" data-i18n="loginBtn">登录</button>
+    <div class="login-error" id="loginError"></div>
+  </div>
+</div>
+
+<!-- Sheet picker modal -->
+<div class="modal-bg" id="sheetModal">
+  <div class="modal">
+    <h3 data-i18n="sheetModalTitle">选择工作表</h3>
+    <div class="sheet-list" id="sheetList"></div>
+    <button class="modal-cancel" onclick="closeSheetModal()" data-i18n="cancelBtn">取消</button>
+  </div>
+</div>
+
+<!-- Main App -->
+<div id="app">
+  <div class="header">
+    <div class="h-title" data-i18n="headerTitle">⚙️ 故障助手</div>
+    <div class="h-badge" data-i18n="headerBadge">后台管理</div>
+    <button class="lang-btn" id="langBtn" onclick="toggleLang()">EN</button>
+    <button class="logout-btn" onclick="logout()" data-i18n="logoutBtn">退出登录</button>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" id="tab-upload" onclick="switchTab('upload')" data-i18n="tabUpload">📤 上传资料</div>
+    <div class="tab" id="tab-docs" onclick="switchTab('docs')" data-i18n="tabDocs">📁 文档管理</div>
+    <div class="tab" id="tab-kb" onclick="switchTab('kb')" data-i18n="tabKb">📚 知识库管理</div>
+    <div class="tab" id="tab-versions" onclick="switchTab('versions')" data-i18n="tabVersions">🏷️ 版本管理</div>
+  </div>
+
+  <div class="content">
+    <!-- Upload Tab -->
+    <div id="panel-upload">
+       <div id="docMetaBox" style="margin-bottom:16px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" data-i18n="fieldVersion">版本号</label>
+            <input type="text" class="form-input" id="docVersion" data-i18n-placeholder="versionPlaceholder" placeholder="如 1101，留空则不关联版本">
+          </div>
+          <div class="form-group">
+            <label class="form-label" data-i18n="fieldDocType">文档类型</label>
+            <select class="form-input" id="docType">
+              <option value="" data-i18n="docTypeEmpty">-- 请选择 --</option>
+              <option value="user_manual" data-i18n="docTypeUserManual">用户手册</option>
+              <option value="test_report" data-i18n="docTypeTestReport">测试报告</option>
+              <option value="product_spec" data-i18n="docTypeProductSpec">产品说明书</option>
+            </select>
+          </div>
+        </div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px" data-i18n="docMetaNote">仅适用于 PDF / DOCX / PPTX，上传 Excel 时忽略</div>
+      </div>
+      <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+        <div class="drop-icon">📂</div>
+        <div class="drop-text" data-i18n="dropText">点击或拖放文件上传</div>
+        <div class="drop-sub" data-i18n="dropSub">支持 PDF、DOCX、PPTX、XLSX、XLS</div>
+      </div>
+      <input type="file" id="fileInput" accept=".pdf,.docx,.pptx,.doc,.ppt,.xlsx,.xls" onchange="handleFileSelect(this)">
+      <div id="uploadResult"></div>
+    </div>
+
+    <!-- Docs Tab -->
+    <div id="panel-docs" style="display:none">
+      <div class="docs-header">
+        <div class="docs-title" data-i18n="docsTitle">已上传文档</div>
+        <button class="refresh-btn" onclick="loadDocuments()" data-i18n="refreshBtn">↻ 刷新</button>
+      </div>
+      <div id="docsContent">
+        <div class="loading-state" data-i18n="loading">加载中...</div>
+      </div>
+    </div>
+
+    <!-- Knowledge Tab -->
+    <div id="panel-kb" style="display:none">
+      <div class="kb-header">
+        <div class="kb-title" data-i18n="kbTitle">知识条目列表</div>
+        <button class="add-btn" onclick="toggleAddForm()" data-i18n="addBtn">+ 添加条目</button>
+      </div>
+
+      <div class="add-form" id="addForm">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" data-i18n="fieldErrorCode">错误码</label>
+            <input type="text" class="form-input" id="f-error-code" data-i18n-placeholder="phErrorCode" placeholder="如 E02">
+          </div>
+          <div class="form-group">
+            <label class="form-label" data-i18n="fieldDeviceModel">设备型号</label>
+            <input type="text" class="form-input" id="f-device-models" data-i18n-placeholder="phDeviceModel" placeholder="如 LX-500">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group full">
+            <label class="form-label"><span data-i18n="fieldTitle">标题</span> <span style="color:var(--red)">*</span></label>
+            <input type="text" class="form-input" id="f-title" data-i18n-placeholder="phTitle" placeholder="故障标题">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group full">
+            <label class="form-label"><span data-i18n="fieldContent">内容</span> <span style="color:var(--red)">*</span></label>
+            <textarea class="form-textarea" id="f-content" data-i18n-placeholder="phContent" placeholder="故障描述、原因分析、解决方案..."></textarea>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group full">
+            <label class="form-label" data-i18n="fieldKeywords">关键词</label>
+            <input type="text" class="form-input" id="f-keywords" data-i18n-placeholder="phKeywords" placeholder="逗号分隔，如 显示屏,不亮">
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="cancel-btn" onclick="toggleAddForm()" data-i18n="cancelBtn">取消</button>
+          <button class="save-btn" onclick="saveKnowledge()" data-i18n="saveBtn">保存</button>
+        </div>
+      </div>
+
+      <div class="batch-bar" id="batchBar">
+        <span class="batch-count" id="batchCount">已选 0 条</span>
+        <button class="desel-btn" onclick="clearSelection()" data-i18n="deselectBtn">取消选择</button>
+        <button class="batch-del-btn" onclick="batchDeleteKnowledge()" data-i18n="batchDelBtn">删除选中</button>
+      </div>
+
+      <div id="kbContent">
+        <div class="loading-state" data-i18n="loading">加载中...</div>
+      </div>
+    </div>
+
+    <!-- Versions Tab -->
+    <div id="panel-versions" style="display:none">
+      <div class="kb-header">
+        <div class="kb-title" data-i18n="tabVersions">🏷️ 版本管理</div>
+        <button class="add-btn" onclick="toggleVersionForm()" data-i18n="verAddBtn">+ 添加版本</button>
+      </div>
+
+      <div class="ver-chain-hint" data-i18n="verChainHint">
+        版本链规则：根版本（如 1101）不设上级；累积版（如 110102V）的上级填直接前一个版本（110102V → 1101，110103V → 110102V）。检索时自动从当前版本沿链向上合并，越新的版本优先级越高。
+      </div>
+
+      <div class="add-form" id="verForm" style="margin-top:16px">
+        <input type="hidden" id="vf-editing-code">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label"><span data-i18n="verCode">版本号</span> <span style="color:var(--red)">*</span></label>
+            <input type="text" class="form-input" id="vf-code" placeholder="如 1101 / 110102V">
+          </div>
+          <div class="form-group">
+            <label class="form-label" data-i18n="verName">版本名称</label>
+            <input type="text" class="form-input" id="vf-name" placeholder="如 BPro基础版（可选）">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group" id="vf-parent-group">
+            <label class="form-label"><span data-i18n="verParent">上级版本</span> <span style="color:var(--red)">*</span></label>
+            <select class="form-input" id="vf-parent">
+              <option value="" data-i18n="verParentEmpty">-- 请选择上级版本 --</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" style="margin-bottom:10px" data-i18n="verIsBase">类型</label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+              <input type="checkbox" id="vf-is-base" onchange="toggleParentField()" style="width:15px;height:15px;accent-color:var(--accent)">
+              <span data-i18n="verIsBaseLabel">根版本（无上级，该系列起点）</span>
+            </label>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="cancel-btn" onclick="cancelVersionForm()" data-i18n="cancelBtn">取消</button>
+          <button class="save-btn" onclick="saveVersion()" data-i18n="saveBtn">保存</button>
+        </div>
+      </div>
+
+      <div id="verContent" style="margin-top:16px">
+        <div class="loading-state" data-i18n="loading">加载中...</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ---- i18n ----
+const TRANSLATIONS = {
+  zh: {
+    pageTitle: '故障助手 - 后台管理',
+    langBtn: 'EN',
+    loginTitle: '⚙️ 后台管理',
+    loginSubtitle: '请输入管理员密码以继续',
+    loginPwdPlaceholder: '管理员密码',
+    loginBtn: '登录',
+    loginErrEmpty: '请输入密码',
+    loginErrWrong: '密码错误，请重试',
+    loginErrNetwork: '网络错误，请稍后重试',
+    sheetModalTitle: '选择工作表',
+    cancelBtn: '取消',
+    headerTitle: '⚙️ 故障助手',
+    headerBadge: '后台管理',
+    logoutBtn: '退出登录',
+    tabUpload: '📤 上传资料',
+    tabDocs: '📁 文档管理',
+    tabKb: '📚 知识库管理',
+    tabVersions: '🏷️ 版本管理',
+    verAddBtn: '+ 添加版本',
+    verChainHint: '版本链规则：根版本（如 1101）不设上级；累积版（如 110102V）的上级填直接前一个版本（110102V → 1101，110103V → 110102V）。检索时自动从当前版本沿链向上合并，越新的版本优先级越高。',
+    verCode: '版本号',
+    verName: '版本名称',
+    verParent: '上级版本',
+    verParentEmpty: '-- 请选择上级版本 --',
+    verIsBase: '类型',
+    verIsBaseLabel: '根版本（无上级，该系列起点）',
+    verTypeBadgeRoot: '根版本',
+    verTypeBadgeChain: '累积版',
+    verColCode: '版本号',
+    verColName: '名称',
+    verColType: '类型',
+    verColParent: '上级版本',
+    verColActions: '操作',
+    verNoData: '暂无版本记录',
+    verSaveOk: '版本保存成功',
+    verDelConfirm: code => `确认删除版本 "${code}"？此操作不可撤销。`,
+    verDelOk: '版本已删除',
+    verEditBtn: '编辑',
+    dropText: '点击或拖放文件上传',
+    dropSub: '支持 PDF、DOCX、PPTX、XLSX、XLS',
+    fieldVersion: '版本号',
+    versionPlaceholder: '如 1101，留空则不关联版本',
+    fieldDocType: '文档类型',
+    docTypeEmpty: '-- 请选择 --',
+    docTypeUserManual: '用户手册',
+    docTypeTestReport: '测试报告',
+    docTypeProductSpec: '产品说明书',
+    docMetaNote: '仅适用于 PDF / DOCX / PPTX，上传 Excel 时忽略',
+    docsTitle: '已上传文档',
+    refreshBtn: '↻ 刷新',
+    loading: '加载中...',
+    loadFailed: '加载失败',
+    loadFailedNetwork: '加载失败，请检查网络',
+    noDocs: '暂无已上传文档',
+    kbTitle: '知识条目列表',
+    addBtn: '+ 添加条目',
+    fieldErrorCode: '错误码',
+    fieldDeviceModel: '设备型号',
+    fieldTitle: '标题',
+    fieldContent: '内容',
+    fieldKeywords: '关键词',
+    phErrorCode: '如 E02',
+    phDeviceModel: '如 LX-500',
+    phTitle: '故障标题',
+    phContent: '故障描述、原因分析、解决方案...',
+    phKeywords: '逗号分隔，如 显示屏,不亮',
+    saveBtn: '保存',
+    deselectBtn: '取消选择',
+    batchDelBtn: '删除选中',
+    batchCountTpl: n => `已选 ${n} 条`,
+    noKb: '暂无知识条目',
+    deleteBtn: '删除',
+    thFile: '文件名',
+    thTextChunks: '文本段',
+    thTables: '表格',
+    thImages: '图片',
+    thTotal: '总计',
+    thAction: '操作',
+    thErrorCode: '错误码',
+    thTitle: '标题',
+    thContent: '内容',
+    confirmDelDoc: src => `确认删除「${src}」的所有索引数据？\n\n此操作将同时删除 Qdrant 向量和 B2 图片，不可撤销。`,
+    confirmDelKb: '确认删除该条目？此操作不可撤销。',
+    confirmBatchDel: n => `确认删除选中的 ${n} 条知识条目？此操作不可撤销。`,
+    requiredFields: '标题和内容为必填项',
+    uploadingFile: name => `正在上传 ${name}...`,
+    importing: '导入中...',
+    previewFailed: msg => `预览失败: ${msg}`,
+    importOk: msg => `✅ ${msg}`,
+    importFailed: msg => `❌ 导入失败: ${msg}`,
+    uploadFailed: msg => `❌ 上传失败: ${msg}`,
+    deleteFailed: msg => `删除失败: ${msg}`,
+    batchDelFailed: msg => `批量删除失败: ${msg}`,
+    saveFailed: msg => `保存失败: ${msg}`,
+    reqFailed: msg => `请求失败: ${msg}`,
+  },
+  en: {
+    pageTitle: 'Fault Assistant - Admin',
+    langBtn: '中文',
+    loginTitle: '⚙️ Admin Panel',
+    loginSubtitle: 'Enter admin password to continue',
+    loginPwdPlaceholder: 'Admin password',
+    loginBtn: 'Login',
+    loginErrEmpty: 'Please enter password',
+    loginErrWrong: 'Incorrect password, please try again',
+    loginErrNetwork: 'Network error, please try again',
+    sheetModalTitle: 'Select Worksheet',
+    cancelBtn: 'Cancel',
+    headerTitle: '⚙️ Fault Assistant',
+    headerBadge: 'Admin',
+    logoutBtn: 'Logout',
+    tabUpload: '📤 Upload',
+    tabDocs: '📁 Documents',
+    tabKb: '📚 Knowledge Base',
+    tabVersions: '🏷️ Versions',
+    verAddBtn: '+ Add Version',
+    verChainHint: 'Chain rule: root versions (e.g. 1101) have no parent; chain versions (e.g. 110102V) set parent to the immediate predecessor (110102V → 1101, 110103V → 110102V). Retrieval walks the chain newest-first.',
+    verCode: 'Version Code',
+    verName: 'Version Name',
+    verParent: 'Parent Version',
+    verParentEmpty: '-- Select parent --',
+    verIsBase: 'Type',
+    verIsBaseLabel: 'Root version (no parent, start of this series)',
+    verTypeBadgeRoot: 'Root',
+    verTypeBadgeChain: 'Chain',
+    verColCode: 'Code',
+    verColName: 'Name',
+    verColType: 'Type',
+    verColParent: 'Parent',
+    verColActions: 'Actions',
+    verNoData: 'No versions registered',
+    verSaveOk: 'Version saved',
+    verDelConfirm: code => `Delete version "${code}"? This cannot be undone.`,
+    verDelOk: 'Version deleted',
+    verEditBtn: 'Edit',
+    dropText: 'Click or drag files to upload',
+    dropSub: 'Supports PDF, DOCX, PPTX, XLSX, XLS',
+    fieldVersion: 'Version',
+    versionPlaceholder: 'e.g. 1101, leave empty to skip',
+    fieldDocType: 'Document Type',
+    docTypeEmpty: '-- Select --',
+    docTypeUserManual: 'User Manual',
+    docTypeTestReport: 'Test Report',
+    docTypeProductSpec: 'Product Spec',
+    docMetaNote: 'Applies to PDF / DOCX / PPTX only, ignored for Excel',
+    docsTitle: 'Uploaded Documents',
+    refreshBtn: '↻ Refresh',
+    loading: 'Loading...',
+    loadFailed: 'Load failed',
+    loadFailedNetwork: 'Load failed, please check your network',
+    noDocs: 'No documents uploaded',
+    kbTitle: 'Knowledge Entries',
+    addBtn: '+ Add Entry',
+    fieldErrorCode: 'Error Code',
+    fieldDeviceModel: 'Device Model',
+    fieldTitle: 'Title',
+    fieldContent: 'Content',
+    fieldKeywords: 'Keywords',
+    phErrorCode: 'e.g. E02',
+    phDeviceModel: 'e.g. LX-500',
+    phTitle: 'Fault title',
+    phContent: 'Fault description, root cause, solution...',
+    phKeywords: 'Comma-separated, e.g. display,blank',
+    saveBtn: 'Save',
+    deselectBtn: 'Deselect',
+    batchDelBtn: 'Delete Selected',
+    batchCountTpl: n => `${n} selected`,
+    noKb: 'No knowledge entries',
+    deleteBtn: 'Delete',
+    thFile: 'Filename',
+    thTextChunks: 'Text Chunks',
+    thTables: 'Tables',
+    thImages: 'Images',
+    thTotal: 'Total',
+    thAction: 'Action',
+    thErrorCode: 'Error Code',
+    thTitle: 'Title',
+    thContent: 'Content',
+    confirmDelDoc: src => `Confirm delete all index data for "${src}"?\n\nThis will also delete Qdrant vectors and B2 images. This action cannot be undone.`,
+    confirmDelKb: 'Confirm delete this entry? This action cannot be undone.',
+    confirmBatchDel: n => `Confirm delete ${n} selected knowledge entries? This action cannot be undone.`,
+    requiredFields: 'Title and content are required',
+    uploadingFile: name => `Uploading ${name}...`,
+    importing: 'Importing...',
+    previewFailed: msg => `Preview failed: ${msg}`,
+    importOk: msg => `✅ ${msg}`,
+    importFailed: msg => `❌ Import failed: ${msg}`,
+    uploadFailed: msg => `❌ Upload failed: ${msg}`,
+    deleteFailed: msg => `Delete failed: ${msg}`,
+    batchDelFailed: msg => `Batch delete failed: ${msg}`,
+    saveFailed: msg => `Save failed: ${msg}`,
+    reqFailed: msg => `Request failed: ${msg}`,
+  },
+};
+
+let currentLang = localStorage.getItem('fa_lang') || 'zh';
+
+function t(key, ...args) {
+  const dict = TRANSLATIONS[currentLang] || TRANSLATIONS.zh;
+  const val = dict[key];
+  if (typeof val === 'function') return val(...args);
+  return val !== undefined ? val : key;
+}
+
+function applyI18n() {
+  document.documentElement.lang = currentLang === 'zh' ? 'zh-CN' : 'en';
+  document.title = t('pageTitle');
+  document.getElementById('langBtn').textContent = t('langBtn');
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.getAttribute('data-i18n');
+    const val = t(key);
+    if (val) el.textContent = val;
+  });
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+    const key = el.getAttribute('data-i18n-placeholder');
+    const val = t(key);
+    if (val) el.placeholder = val;
+  });
+}
+
+function toggleLang() {
+  currentLang = currentLang === 'zh' ? 'en' : 'zh';
+  localStorage.setItem('fa_lang', currentLang);
+  applyI18n();
+  // re-render visible dynamic content
+  const kbVisible = document.getElementById('panel-kb').style.display !== 'none';
+  const docsVisible = document.getElementById('panel-docs').style.display !== 'none';
+  if (kbVisible && knowledgeItems.length) renderKnowledge();
+  if (docsVisible && docsItems.length) renderDocuments(docsItems);
+  // update batch count if visible
+  if (selectedIds.size > 0) {
+    document.getElementById('batchCount').textContent = t('batchCountTpl', selectedIds.size);
+  }
+}
+
+// ---- auth ----
+const SESSION_KEY = 'admin_password';
+
+function adminPwd() {
+  return sessionStorage.getItem(SESSION_KEY) || '';
+}
+
+function authHeaders() {
+  return { 'X-Admin-Password': adminPwd() };
+}
+
+function jsonHeaders() {
+  return { 'Content-Type': 'application/json', 'X-Admin-Password': adminPwd() };
+}
+
+// ---- login ----
+async function doLogin() {
+  const pwd = document.getElementById('loginPwd').value;
+  const btn = document.getElementById('loginBtn');
+  const err = document.getElementById('loginError');
+  if (!pwd) { err.textContent = t('loginErrEmpty'); return; }
+  btn.disabled = true;
+  err.textContent = '';
+  try {
+    const res = await fetch('/api/admin/auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pwd }),
+    });
+    if (res.ok) {
+      sessionStorage.setItem(SESSION_KEY, pwd);
+      showApp();
+    } else {
+      err.textContent = t('loginErrWrong');
+    }
+  } catch {
+    err.textContent = t('loginErrNetwork');
+  }
+  btn.disabled = false;
+}
+
+function showApp() {
+  document.getElementById('loginOverlay').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+}
+
+function logout() {
+  sessionStorage.removeItem(SESSION_KEY);
+  location.reload();
+}
+
+document.getElementById('loginPwd').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doLogin();
+});
+
+// ---- tab switch ----
+function switchTab(name) {
+  ['upload', 'docs', 'kb', 'versions'].forEach(t => {
+    document.getElementById('tab-' + t).classList.toggle('active', t === name);
+    document.getElementById('panel-' + t).style.display = t === name ? '' : 'none';
+  });
+  if (name === 'kb') loadKnowledge();
+  if (name === 'docs') loadDocuments();
+  if (name === 'versions') loadVersions();
+}
+
+// ---- versions tab ----
+let _verItems = [];
+
+async function loadVersions() {
+  document.getElementById('verContent').innerHTML = `<div class="loading-state">${t('loading')}</div>`;
+  try {
+    const res = await fetch('/api/admin/versions', { headers: authHeaders() });
+    _verItems = res.ok ? (await res.json()).items || [] : [];
+    renderVersions();
+  } catch {
+    document.getElementById('verContent').innerHTML = `<div class="empty-state">${t('loadFailed')}</div>`;
+  }
+}
+
+function renderVersions() {
+  const el = document.getElementById('verContent');
+  if (!_verItems.length) {
+    el.innerHTML = `<div class="empty-state">${t('verNoData')}</div>`;
+    return;
+  }
+  const rows = _verItems.map(v => {
+    const typeBadge = v.is_base
+      ? `<span class="badge badge-root">${t('verTypeBadgeRoot')}</span>`
+      : `<span class="badge badge-chain">${t('verTypeBadgeChain')}</span>`;
+    const parent = v.base_version_code
+      ? `<code style="font-size:12px;background:var(--surface2);padding:2px 6px;border-radius:4px">${escHtml(v.base_version_code)}</code>`
+      : `<span style="color:var(--muted)">—</span>`;
+    return `<tr>
+      <td><code style="font-size:13px">${escHtml(v.version_code)}</code></td>
+      <td>${escHtml(v.version_name || '—')}</td>
+      <td>${typeBadge}</td>
+      <td>${parent}</td>
+      <td>
+        <button class="del-btn" style="margin-right:6px;border-color:rgba(59,130,246,.4);color:#60a5fa" onclick="editVersion('${escHtml(v.version_code)}')">${t('verEditBtn')}</button>
+        <button class="del-btn" onclick="deleteVersion('${escHtml(v.version_code)}')">${t('deleteBtn')}</button>
+      </td>
+    </tr>`;
+  }).join('');
+  el.innerHTML = `<table class="kb-table">
+    <thead><tr>
+      <th>${t('verColCode')}</th>
+      <th>${t('verColName')}</th>
+      <th>${t('verColType')}</th>
+      <th>${t('verColParent')}</th>
+      <th>${t('verColActions')}</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+function toggleVersionForm(show) {
+  const form = document.getElementById('verForm');
+  const isShow = show !== undefined ? show : !form.classList.contains('show');
+  form.classList.toggle('show', isShow);
+  if (!isShow) return;
+  // 刷新上级版本下拉选项
+  _refreshParentSelect();
+}
+
+function _refreshParentSelect(excludeCode) {
+  const sel = document.getElementById('vf-parent');
+  const current = sel.value;
+  while (sel.options.length > 1) sel.remove(1);
+  _verItems.forEach(v => {
+    if (v.version_code === excludeCode) return;
+    const opt = document.createElement('option');
+    opt.value = v.version_code;
+    opt.textContent = v.version_name ? `${v.version_code}（${v.version_name}）` : v.version_code;
+    sel.appendChild(opt);
+  });
+  sel.value = current;
+}
+
+function toggleParentField() {
+  const isBase = document.getElementById('vf-is-base').checked;
+  document.getElementById('vf-parent-group').style.display = isBase ? 'none' : '';
+}
+
+function cancelVersionForm() {
+  document.getElementById('verForm').classList.remove('show');
+  document.getElementById('vf-editing-code').value = '';
+  document.getElementById('vf-code').value = '';
+  document.getElementById('vf-name').value = '';
+  document.getElementById('vf-is-base').checked = false;
+  document.getElementById('vf-parent').value = '';
+  document.getElementById('vf-parent-group').style.display = '';
+  document.getElementById('vf-code').readOnly = false;
+}
+
+function editVersion(code) {
+  const v = _verItems.find(x => x.version_code === code);
+  if (!v) return;
+  toggleVersionForm(true);
+  _refreshParentSelect(code);
+  document.getElementById('vf-editing-code').value = code;
+  document.getElementById('vf-code').value = v.version_code;
+  document.getElementById('vf-code').readOnly = true;
+  document.getElementById('vf-name').value = v.version_name || '';
+  document.getElementById('vf-is-base').checked = !!v.is_base;
+  document.getElementById('vf-parent').value = v.base_version_code || '';
+  toggleParentField();
+}
+
+async function saveVersion() {
+  const editingCode = document.getElementById('vf-editing-code').value;
+  const code = document.getElementById('vf-code').value.trim();
+  const name = document.getElementById('vf-name').value.trim();
+  const isBase = document.getElementById('vf-is-base').checked;
+  const parent = document.getElementById('vf-parent').value;
+
+  if (!code) { alert(t('verCode') + ' ' + t('requiredFields')); return; }
+  if (!isBase && !parent) { alert(t('verParent') + ' ' + t('requiredFields')); return; }
+
+  const body = { version_code: code, version_name: name, is_base: isBase, base_version_code: isBase ? null : parent };
+  try {
+    let res;
+    if (editingCode) {
+      res = await fetch(`/api/admin/versions/${encodeURIComponent(editingCode)}`, { method: 'PUT', headers: jsonHeaders(), body: JSON.stringify(body) });
+    } else {
+      res = await fetch('/api/admin/versions', { method: 'POST', headers: jsonHeaders(), body: JSON.stringify(body) });
+    }
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      cancelVersionForm();
+      await loadVersions();
+      alert(t('verSaveOk'));
+    } else {
+      const detail = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail);
+      alert(detail || t('saveFailed'));
+    }
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function deleteVersion(code) {
+  if (!confirm(t('verDelConfirm', code))) return;
+  try {
+    const res = await fetch(`/api/admin/versions/${encodeURIComponent(code)}`, { method: 'DELETE', headers: authHeaders() });
+    if (res.ok) {
+      await loadVersions();
+      alert(t('verDelOk'));
+    } else {
+      const data = await res.json().catch(() => ({}));
+      alert(data.detail || t('deleteFailed'));
+    }
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+// ---- upload tab ----
+const dropZone = document.getElementById('dropZone');
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file) uploadFile(file);
+});
+
+function handleFileSelect(input) {
+  if (input.files[0]) uploadFile(input.files[0]);
+  input.value = '';
+}
+
+
+let _pendingExcelFile = null;
+
+async function uploadFile(file) {
+  const ext = file.name.split('.').pop().toLowerCase();
+  const resultDiv = document.getElementById('uploadResult');
+  resultDiv.innerHTML = `<div class="upload-result" style="background:var(--surface);border:1px solid var(--border);color:var(--muted)"><span class="spinner"></span>${t('uploadingFile', escHtml(file.name))}</div>`;
+
+  if (ext === 'xlsx' || ext === 'xls') {
+    await uploadExcel(file);
+  } else {
+    await uploadDocument(file);
+  }
+}
+
+async function uploadExcel(file) {
+  const resultDiv = document.getElementById('uploadResult');
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const res = await fetch('/api/admin/knowledge/import/preview', { method: 'POST', headers: authHeaders(), body: fd });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      resultDiv.innerHTML = `<div class="upload-result error">${t('previewFailed', escHtml(d.detail || res.statusText))}</div>`;
+      return;
+    }
+    const data = await res.json();
+    if (data.sheets && data.sheets.length > 1) {
+      _pendingExcelFile = file;
+      openSheetModal(data.sheets);
+    } else {
+      await doImportExcel(file, data.sheets?.[0] || null);
+    }
+  } catch (e) {
+    resultDiv.innerHTML = `<div class="upload-result error">${t('uploadFailed', escHtml(e.message))}</div>`;
+  }
+}
+
+function openSheetModal(sheets) {
+  const list = document.getElementById('sheetList');
+  list.innerHTML = '';
+  sheets.forEach(s => {
+    const div = document.createElement('div');
+    div.className = 'sheet-item';
+    div.textContent = s;
+    div.onclick = () => { closeSheetModal(); doImportExcel(_pendingExcelFile, s); };
+    list.appendChild(div);
+  });
+  document.getElementById('sheetModal').classList.add('show');
+}
+
+function closeSheetModal() {
+  document.getElementById('sheetModal').classList.remove('show');
+  _pendingExcelFile = null;
+}
+
+async function doImportExcel(file, sheetName) {
+  const resultDiv = document.getElementById('uploadResult');
+  resultDiv.innerHTML = `<div class="upload-result" style="background:var(--surface);border:1px solid var(--border);color:var(--muted)"><span class="spinner"></span>${t('importing')}</div>`;
+  const fd = new FormData();
+  fd.append('file', file);
+  const url = sheetName ? `/api/admin/knowledge/import?sheet_name=${encodeURIComponent(sheetName)}` : '/api/admin/knowledge/import';
+  try {
+    const res = await fetch(url, { method: 'POST', headers: authHeaders(), body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      resultDiv.innerHTML = `<div class="upload-result success">${t('importOk', escHtml(data.message || ''))}</div>`;
+    } else {
+      resultDiv.innerHTML = `<div class="upload-result error">${t('importFailed', escHtml(data.detail || res.statusText))}</div>`;
+    }
+  } catch (e) {
+    resultDiv.innerHTML = `<div class="upload-result error">${t('uploadFailed', escHtml(e.message))}</div>`;
+  }
+}
+
+async function uploadDocument(file) {
+  const resultDiv = document.getElementById('uploadResult');
+  const version = document.getElementById('docVersion').value;
+  const docType = document.getElementById('docType').value;
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('version', version);
+  fd.append('doc_type', docType);
+  try {
+    const res = await fetch('/api/admin/knowledge/import/document', { method: 'POST', headers: authHeaders(), body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      resultDiv.innerHTML = `<div class="upload-result success">${t('importOk', escHtml(data.message || ''))}</div>`;
+      if (document.getElementById('tab-docs').classList.contains('active')) loadDocuments();
+    } else {
+      resultDiv.innerHTML = `<div class="upload-result error">❌ ${escHtml(data.detail || '')}</div>`;
+    }
+  } catch (e) {
+    resultDiv.innerHTML = `<div class="upload-result error">${t('uploadFailed', escHtml(e.message))}</div>`;
+  }
+}
+
+// ---- docs tab ----
+let docsItems = [];
+
+async function loadDocuments() {
+  const container = document.getElementById('docsContent');
+  container.innerHTML = `<div class="loading-state">${t('loading')}</div>`;
+  try {
+    const res = await fetch('/api/admin/documents', { headers: authHeaders() });
+    if (!res.ok) { container.innerHTML = `<div class="empty-state">${t('loadFailed')}</div>`; return; }
+    const data = await res.json();
+    docsItems = data.items || [];
+    renderDocuments(docsItems);
+  } catch {
+    container.innerHTML = `<div class="empty-state">${t('loadFailedNetwork')}</div>`;
+  }
+}
+
+function renderDocuments(items) {
+  const container = document.getElementById('docsContent');
+  if (!items.length) {
+    container.innerHTML = `<div class="empty-state">${t('noDocs')}</div>`;
+    return;
+  }
+  const rows = items.map((item, idx) => `
+    <tr>
+      <td style="color:var(--muted);width:36px">${idx + 1}</td>
+      <td style="max-width:320px;word-break:break-all">${escHtml(item.source)}</td>
+      <td style="text-align:center"><span class="badge badge-text">${item.text_chunks}</span></td>
+      <td style="text-align:center"><span class="badge badge-table">${item.tables}</span></td>
+      <td style="text-align:center"><span class="badge badge-img">${item.images}</span></td>
+      <td style="text-align:center;color:var(--muted)">${item.total}</td>
+      <td><button class="del-btn" onclick="deleteDocument('${escHtml(item.source)}')">${t('deleteBtn')}</button></td>
+    </tr>
+  `).join('');
+  container.innerHTML = `
+    <table class="kb-table">
+      <thead><tr>
+        <th>#</th><th>${t('thFile')}</th>
+        <th style="text-align:center">${t('thTextChunks')}</th>
+        <th style="text-align:center">${t('thTables')}</th>
+        <th style="text-align:center">${t('thImages')}</th>
+        <th style="text-align:center">${t('thTotal')}</th>
+        <th>${t('thAction')}</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+async function deleteDocument(source) {
+  if (!confirm(t('confirmDelDoc', source))) return;
+  try {
+    const res = await fetch(`/api/admin/documents/${encodeURIComponent(source)}`, {
+      method: 'DELETE',
+      headers: authHeaders(),
+    });
+    if (res.ok) {
+      await loadDocuments();
+    } else {
+      const d = await res.json().catch(() => ({}));
+      alert(t('deleteFailed', d.detail || res.statusText));
+    }
+  } catch (e) {
+    alert(t('reqFailed', e.message));
+  }
+}
+
+// ---- knowledge tab ----
+let knowledgeItems = [];
+let selectedIds = new Set();
+
+function toggleSelectAll(checked) {
+  selectedIds = new Set();
+  document.querySelectorAll('.row-check').forEach(cb => {
+    cb.checked = checked;
+    if (checked) selectedIds.add(cb.dataset.id);
+  });
+  updateSelectionBar();
+}
+
+function onRowCheck(id, checked) {
+  if (checked) selectedIds.add(id); else selectedIds.delete(id);
+  const cbs = document.querySelectorAll('.row-check');
+  const sa = document.getElementById('selectAll');
+  if (sa) {
+    sa.checked = selectedIds.size === cbs.length;
+    sa.indeterminate = selectedIds.size > 0 && selectedIds.size < cbs.length;
+  }
+  updateSelectionBar();
+}
+
+function updateSelectionBar() {
+  const bar = document.getElementById('batchBar');
+  if (selectedIds.size > 0) {
+    bar.classList.add('show');
+    document.getElementById('batchCount').textContent = t('batchCountTpl', selectedIds.size);
+  } else {
+    bar.classList.remove('show');
+  }
+}
+
+function clearSelection() {
+  selectedIds = new Set();
+  document.querySelectorAll('.row-check').forEach(cb => cb.checked = false);
+  const sa = document.getElementById('selectAll');
+  if (sa) { sa.checked = false; sa.indeterminate = false; }
+  updateSelectionBar();
+}
+
+async function batchDeleteKnowledge() {
+  const ids = [...selectedIds];
+  if (!ids.length) return;
+  if (!confirm(t('confirmBatchDel', ids.length))) return;
+  try {
+    const res = await fetch('/api/admin/knowledge/batch-delete', {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ ids }),
+    });
+    if (res.ok) {
+      selectedIds = new Set();
+      await loadKnowledge();
+    } else {
+      const d = await res.json().catch(() => ({}));
+      alert(t('batchDelFailed', d.detail || res.statusText));
+    }
+  } catch (e) {
+    alert(t('reqFailed', e.message));
+  }
+}
+
+async function loadKnowledge() {
+  const container = document.getElementById('kbContent');
+  container.innerHTML = `<div class="loading-state">${t('loading')}</div>`;
+  try {
+    const res = await fetch('/api/admin/knowledge', { headers: authHeaders() });
+    if (!res.ok) { container.innerHTML = `<div class="empty-state">${t('loadFailed')}</div>`; return; }
+    const data = await res.json();
+    knowledgeItems = data.items || [];
+    renderKnowledge();
+  } catch {
+    container.innerHTML = `<div class="empty-state">${t('loadFailedNetwork')}</div>`;
+  }
+}
+
+function renderKnowledge() {
+  selectedIds = new Set();
+  updateSelectionBar();
+  const container = document.getElementById('kbContent');
+  if (!knowledgeItems.length) {
+    container.innerHTML = `<div class="empty-state">${t('noKb')}</div>`;
+    return;
+  }
+  const rows = knowledgeItems.map((item, idx) => `
+    <tr>
+      <td style="width:36px;text-align:center"><input type="checkbox" class="kb-check row-check" data-id="${escHtml(item.id)}" onchange="onRowCheck('${escHtml(item.id)}',this.checked)"></td>
+      <td style="color:var(--muted);width:36px">${idx + 1}</td>
+      <td style="white-space:nowrap">${escHtml(item.error_code || '-')}</td>
+      <td style="max-width:200px">${escHtml(item.title || '')}</td>
+      <td style="max-width:340px;color:var(--muted)">${escHtml((item.content || '').substring(0, 60))}${(item.content || '').length > 60 ? '…' : ''}</td>
+      <td><button class="del-btn" onclick="deleteKnowledge('${escHtml(item.id)}')">${t('deleteBtn')}</button></td>
+    </tr>
+  `).join('');
+  container.innerHTML = `
+    <table class="kb-table">
+      <thead><tr>
+        <th style="width:36px;text-align:center"><input type="checkbox" class="kb-check" id="selectAll" onchange="toggleSelectAll(this.checked)"></th>
+        <th>#</th><th>${t('thErrorCode')}</th><th>${t('thTitle')}</th><th>${t('thContent')}</th><th>${t('thAction')}</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function toggleAddForm() {
+  const form = document.getElementById('addForm');
+  form.classList.toggle('show');
+  if (form.classList.contains('show')) {
+    document.getElementById('f-title').focus();
+  }
+}
+
+async function saveKnowledge() {
+  const title = document.getElementById('f-title').value.trim();
+  const content = document.getElementById('f-content').value.trim();
+  if (!title || !content) { alert(t('requiredFields')); return; }
+
+  const body = {
+    error_code: document.getElementById('f-error-code').value.trim(),
+    title,
+    content,
+    keywords: document.getElementById('f-keywords').value.trim(),
+    device_models: document.getElementById('f-device-models').value.trim(),
+  };
+
+  try {
+    const res = await fetch('/api/admin/knowledge', {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify(body),
+    });
+    if (res.ok) {
+      ['f-error-code','f-title','f-content','f-keywords','f-device-models'].forEach(id => document.getElementById(id).value = '');
+      document.getElementById('addForm').classList.remove('show');
+      await loadKnowledge();
+    } else {
+      const d = await res.json().catch(() => ({}));
+      alert(t('saveFailed', d.detail || res.statusText));
+    }
+  } catch (e) {
+    alert(t('reqFailed', e.message));
+  }
+}
+
+async function deleteKnowledge(id) {
+  if (!confirm(t('confirmDelKb'))) return;
+  try {
+    const res = await fetch(`/api/admin/knowledge/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: authHeaders(),
+    });
+    if (res.ok) {
+      await loadKnowledge();
+    } else {
+      const d = await res.json().catch(() => ({}));
+      alert(t('deleteFailed', d.detail || res.statusText));
+    }
+  } catch (e) {
+    alert(t('reqFailed', e.message));
+  }
+}
+
+function escHtml(t) {
+  return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ---- init ----
+applyI18n();
+(function init() {
+  const pwd = sessionStorage.getItem(SESSION_KEY);
+  if (pwd) showApp();
+})();
+</script>
+</body>
+</html>
