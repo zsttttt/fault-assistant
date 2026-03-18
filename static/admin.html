@@ -180,11 +180,11 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
        <div id="docMetaBox" style="margin-bottom:16px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px">
         <div class="form-row">
           <div class="form-group">
-            <label class="form-label" data-i18n="fieldVersion">版本号</label>
-            <input type="text" class="form-input" id="docVersion" data-i18n-placeholder="versionPlaceholder" placeholder="如 1101，留空则不关联版本">
+            <label class="form-label" data-i18n="fieldVersion">版本号</label><span style="color:var(--red);margin-left:2px">*</span>
+            <input type="text" class="form-input" id="docVersion" data-i18n-placeholder="versionPlaceholder" placeholder="如 1101">
           </div>
           <div class="form-group">
-            <label class="form-label" data-i18n="fieldDocType">文档类型</label>
+            <label class="form-label" data-i18n="fieldDocType">文档类型</label><span style="color:var(--red);margin-left:2px">*</span>
             <select class="form-input" id="docType">
               <option value="" data-i18n="docTypeEmpty">-- 请选择 --</option>
               <option value="user_manual" data-i18n="docTypeUserManual">用户手册</option>
@@ -365,7 +365,9 @@ const TRANSLATIONS = {
     dropText: '点击或拖放文件上传',
     dropSub: '支持 PDF、DOCX、PPTX、XLSX、XLS',
     fieldVersion: '版本号',
-    versionPlaceholder: '如 1101，留空则不关联版本',
+    versionPlaceholder: '如 1101',
+    uploadVersionRequired: '请填写版本号',
+    uploadDocTypeRequired: '请选择文档类型',
     fieldDocType: '文档类型',
     docTypeEmpty: '-- 请选择 --',
     docTypeUserManual: '用户手册',
@@ -462,7 +464,9 @@ const TRANSLATIONS = {
     dropText: 'Click or drag files to upload',
     dropSub: 'Supports PDF, DOCX, PPTX, XLSX, XLS',
     fieldVersion: 'Version',
-    versionPlaceholder: 'e.g. 1101, leave empty to skip',
+    versionPlaceholder: 'e.g. 1101',
+    uploadVersionRequired: 'Please enter a version number',
+    uploadDocTypeRequired: 'Please select a document type',
     fieldDocType: 'Document Type',
     docTypeEmpty: '-- Select --',
     docTypeUserManual: 'User Manual',
@@ -869,8 +873,18 @@ async function doImportExcel(file, sheetName) {
 
 async function uploadDocument(file) {
   const resultDiv = document.getElementById('uploadResult');
-  const version = document.getElementById('docVersion').value;
+  const version = document.getElementById('docVersion').value.trim();
   const docType = document.getElementById('docType').value;
+  if (!version) {
+    resultDiv.innerHTML = `<div class="upload-result error">${t('uploadVersionRequired')}</div>`;
+    document.getElementById('docVersion').focus();
+    return;
+  }
+  if (!docType) {
+    resultDiv.innerHTML = `<div class="upload-result error">${t('uploadDocTypeRequired')}</div>`;
+    document.getElementById('docType').focus();
+    return;
+  }
   const fd = new FormData();
   fd.append('file', file);
   fd.append('version', version);

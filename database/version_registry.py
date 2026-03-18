@@ -61,20 +61,23 @@ def get_all_versions() -> list:
         conn.close()
 
 
+_UNSET = object()
+
+
 def update_version(
     version_code: str,
     version_name: Optional[str] = None,
     is_base: Optional[bool] = None,
-    base_version_code: Optional[str] = None,
+    base_version_code: object = _UNSET,
     doc_type_label: Optional[str] = None,
 ) -> Optional[dict]:
-    """更新版本记录，只更新传入的非 None 字段"""
+    """更新版本记录，只更新传入的非 None 字段（base_version_code 传 None 表示显式清空）"""
     existing = get_version(version_code)
     if existing is None:
         return None
 
     new_is_base = is_base if is_base is not None else bool(existing["is_base"])
-    new_base = base_version_code if base_version_code is not None else existing["base_version_code"]
+    new_base = existing["base_version_code"] if base_version_code is _UNSET else base_version_code
     new_name = version_name if version_name is not None else existing["version_name"]
     new_doc_type = doc_type_label if doc_type_label is not None else existing["doc_type_label"]
 

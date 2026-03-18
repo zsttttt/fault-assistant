@@ -20,6 +20,8 @@ def index_images(
     images: List[dict],
     media_store: MediaStore,
     source_file: str = "",
+    version: str = "",
+    doc_type: str = "",
 ) -> List[str]:
     """
     批量索引图片
@@ -45,6 +47,8 @@ def index_images(
                 vectorstore=vectorstore,
                 docstore=docstore,
                 source_file=source_file,
+                version=version,
+                doc_type=doc_type,
             )
             indexed_ids.append(doc_id)
         except Exception as e:
@@ -60,6 +64,8 @@ def _index_single_image(
     vectorstore,
     docstore,
     source_file: str,
+    version: str = "",
+    doc_type: str = "",
 ) -> str:
     img_bytes = img_info["bytes"]
     filename = img_info.get("filename", "image.png")
@@ -106,6 +112,8 @@ def _index_single_image(
                 "type": "image",
                 "page_number": page_number,
                 "group_id": group_id,
+                "version": version,
+                "doc_type": doc_type,
             },
         )
     ])
@@ -121,6 +129,8 @@ def _index_single_image(
                     "source": source_file,
                     "type": "image",
                     "group_id": group_id,
+                    "version": version,
+                    "doc_type": doc_type,
                 },
             ),
         )

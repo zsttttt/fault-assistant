@@ -5,7 +5,7 @@ Docling 文档解析模块
 import gc
 import io
 import uuid
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 _PDF_CHUNK_SIZE = 15
 _INLINE_TEXT_THRESHOLD = 5
@@ -135,6 +135,8 @@ def _build_table_merge_groups(doc):
 
 
 def _make_converter(extract_images: bool = False, table_structure: bool = True):
+    import os
+    from pathlib import Path
     from docling.document_converter import DocumentConverter, PdfFormatOption
     from docling.datamodel.pipeline_options import PdfPipelineOptions
     from docling.datamodel.base_models import InputFormat
@@ -143,6 +145,13 @@ def _make_converter(extract_images: bool = False, table_structure: bool = True):
     pipeline_options.do_ocr = False
     pipeline_options.do_table_structure = table_structure
     pipeline_options.generate_picture_images = extract_images
+
+    artifacts_path = os.getenv("DOCLING_ARTIFACTS_PATH", "")
+    if artifacts_path:
+        pipeline_options.artifacts_path = Path(artifacts_path)
+        print(f"🔧 Docling 使用本地模型: {artifacts_path}  table_structure={table_structure}  extract_images={extract_images}", flush=True)
+    else:
+        print(f"⚠️  DOCLING_ARTIFACTS_PATH 未设置，Docling 将从 HuggingFace 下载模型（首次可能需要数分钟）", flush=True)
 
     return DocumentConverter(
         format_options={

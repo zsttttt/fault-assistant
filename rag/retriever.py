@@ -70,8 +70,9 @@ class KnowledgeRetriever:
         while True:
             points, next_offset = client.scroll(
                 collection_name=QDRANT_COLLECTION_NAME,
-                scroll_filter=Filter(must=[
+                scroll_filter=Filter(should=[
                     FieldCondition(key="metadata.version", match=MatchValue(value=version_code)),
+                    FieldCondition(key="metadata.version", match=MatchValue(value="")),
                 ]),
                 limit=100,
                 offset=offset,
@@ -149,8 +150,12 @@ class KnowledgeRetriever:
         """
         from qdrant_client.models import Filter, FieldCondition, MatchValue, SearchParams
 
+        from qdrant_client.models import Should
         version_filter = Filter(
-            must=[FieldCondition(key="metadata.version", match=MatchValue(value=version_code))]
+            should=[
+                FieldCondition(key="metadata.version", match=MatchValue(value=version_code)),
+                FieldCondition(key="metadata.version", match=MatchValue(value="")),
+            ]
         )
         print(f"[FILTER] version_code={version_code!r}  k={k}", flush=True)
         try:
@@ -200,38 +205,29 @@ class KnowledgeRetriever:
             return [], "low"
 
         error_code = self._extract_error_code(query)
+        chain: List[str] = []
 
         # 版本感知检索
         if version_code:
-            from database.version_registry import get_base_version
-            base_code = get_base_version(version_code)
-
-            if base_code:
-                # 特殊版本：两阶段检索
-                spec_text, spec_img = self._search_with_version_filter(
-                    query, version_code, (top_k + _IMAGE_QUOTA) * 2, "high"
+            from database.version_registry import get_version_chain
+            chain = get_version_chain(version_code)
+            # chain 从新到旧：chain[0] 是用户当前版本（高优先级），后续祖先版本依次补充
+            seen_ids: set = set()
+            text_cands: List[dict] = []
+            image_cands: List[dict] = []
+            for i, vc in enumerate(chain):
+                priority = "high" if i == 0 else "low"
+                t, img = self._search_with_version_filter(
+                    query, vc, (top_k + _IMAGE_QUOTA) * 2, priority
                 )
-                base_text, base_img = self._search_with_version_filter(
-                    query, base_code, (top_k + _IMAGE_QUOTA) * 2, "low"
-                )
-                # 去重（特殊版本优先，基础版本补充）
-                seen_ids: set = set()
-                text_cands: List[dict] = []
-                image_cands: List[dict] = []
-                for c in spec_text + base_text:
+                for c in t:
                     if c["doc_id"] not in seen_ids:
                         seen_ids.add(c["doc_id"])
                         text_cands.append(c)
-                for c in spec_img + base_img:
+                for c in img:
                     if c["doc_id"] not in seen_ids:
                         seen_ids.add(c["doc_id"])
                         image_cands.append(c)
-            else:
-                # 基础版本：单阶段过滤检索，该版本内容对用户而言是直接来源，priority="high"
-                text_cands, image_cands = self._search_with_version_filter(
-                    query, version_code, (top_k + _IMAGE_QUOTA) * 2, "high"
-                )
-                seen_ids = {c["doc_id"] for c in text_cands + image_cands}
         else:
             # 无版本号：原有全量检索逻辑
             try:
@@ -311,6 +307,28 @@ class KnowledgeRetriever:
                     for sib in self._expand_image_group(gid, result_ids):
                         result_ids.add(sib["id"])
                         results.append(sib)
+
+        # 优先级修正：当前版本没有命中任何内容时，结果全部来自祖先版本。
+        # 此时不能简单清空标签（多个祖先版本之间仍需区分新旧），
+        # 而是按版本链顺序重新分配：链上最新的祖先版本升为 high，更旧的保留 low。
+        # 若只有一个祖先版本有内容（无版本间冲突），则统一清空为中性标签。
+        if results and chain and not any(r["priority"] == "high" for r in results):
+            version_rank = {vc: i for i, vc in enumerate(chain)}
+            versioned = [r for r in results if r.get("version") and r["version"] in version_rank]
+            if versioned:
+                min_rank = min(version_rank[r["version"]] for r in versioned)
+                has_older = any(version_rank[r["version"]] > min_rank for r in versioned)
+                for r in results:
+                    v = r.get("version", "")
+                    if not v or v not in version_rank:
+                        r["priority"] = ""
+                    elif version_rank[v] == min_rank:
+                        r["priority"] = "high" if has_older else ""
+                    else:
+                        r["priority"] = "low"
+            else:
+                for r in results:
+                    r["priority"] = ""
 
         if not results:
             confidence = "low"

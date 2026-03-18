@@ -6,7 +6,7 @@ from typing import List, Optional, AsyncGenerator
 import json
 import httpx
 
-from config import LLM_PROVIDER, DASHSCOPE_API_KEY, GEMINI_API_KEY, ANTHROPIC_API_KEY, REDIS_URL
+from config import LLM_PROVIDER, LLM_MODEL, DASHSCOPE_API_KEY, GEMINI_API_KEY, ANTHROPIC_API_KEY, REDIS_URL
 
 
 SYSTEM_PROMPT = """你是一个专业的加油机和充电桩设备故障诊断助手。你的任务是帮助用户解决设备故障问题。
@@ -99,7 +99,7 @@ async def _call_qwen(messages: list) -> str:
                 "Content-Type": "application/json"
             },
             json={
-                "model": "qwen3-max",
+                "model": LLM_MODEL,
                 "messages": messages,
                 "max_tokens": 4096,
                 "temperature": 0.7
@@ -256,7 +256,7 @@ async def _stream_qwen(messages: list) -> AsyncGenerator[str, None]:
                 "Content-Type": "application/json",
             },
             json={
-                "model": "qwen3-max",
+                "model": LLM_MODEL,
                 "messages": messages,
                 "max_tokens": 4096,
                 "temperature": 0.7,

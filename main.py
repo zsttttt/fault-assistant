@@ -340,7 +340,9 @@ async def chat(req: ChatRequest):
 
     retriever = get_retriever()
     search_query = _clean_search_query(req.question, effective_version)
-    context, confidence = retriever.retrieve(search_query, version_code=effective_version)
+    context, confidence = await asyncio.to_thread(
+        lambda: retriever.retrieve(search_query, version_code=effective_version)
+    )
     from src.storage.object_store import get_media_store as _gms
     context = _refresh_media_urls(context, _gms())
     parsed = parse_retrieved_results(context)
@@ -528,7 +530,7 @@ async def import_excel_file(file: UploadFile = File(...), sheet_name: str = None
 
 
 @app.post("/api/admin/knowledge/import/document")
-async def import_document_file(file: UploadFile = File(...), _=Depends(require_admin)):
+async def import_document_file(file: UploadFile = File(...), version: str = Form(""), doc_type: str = Form(""), _=Depends(require_admin)):
     """
     从文档文件解析并导入知识（支持 PDF、DOCX、PPTX）
     使用 Docling 解析，自动分离文本/表格/图片并向量化入库
@@ -550,9 +552,11 @@ async def import_document_file(file: UploadFile = File(...), _=Depends(require_a
         from src.indexing.image_indexer import index_images
         from src.storage.object_store import get_media_store
 
+        print(f"📄 开始解析文档: {file.filename}  version={version!r}  doc_type={doc_type!r}", flush=True)
         texts, tables, images, table_images = await asyncio.to_thread(
             parse_document_with_images, tmp_path
         )
+        print(f"✅ 文档解析完成: 文本段={len(texts)}  表格={len(tables)}  图片={len(images)}", flush=True)
 
         inline_imgs  = [img for img in images if img.get("inline")]
         regular_imgs = [img for img in images if not img.get("inline")]
@@ -607,12 +611,14 @@ async def import_document_file(file: UploadFile = File(...), _=Depends(require_a
             images=[],
             image_descriptions=[],
             source_file=file.filename,
+            version=version,
+            doc_type=doc_type,
         )
 
         indexed_image_ids = []
         if regular_imgs and media_store:
             indexed_image_ids = await asyncio.to_thread(
-                index_images, regular_imgs, media_store, file.filename
+                index_images, regular_imgs, media_store, file.filename, version, doc_type
             )
         elif regular_imgs and not media_store:
             print("⚠️ 未配置对象存储，跳过图片索引")
