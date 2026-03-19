@@ -598,10 +598,12 @@ async def import_document_file(file: UploadFile = File(...), version: str = Form
         if placeholder_map:
             text_chunks = [_replace_inline_placeholders(chunk, placeholder_map) for chunk in text_chunks]
 
+        print(f"⚙️  生成表格摘要: {len(tables)} 个表格", flush=True)
         table_summaries = await asyncio.to_thread(
             lambda: [summarize_table(t) for t in tables]
         )
 
+        print(f"📥 写入 Qdrant: {len(text_chunks)} 段文本 + {len(tables)} 个表格", flush=True)
         index_document_elements(
             text_chunks=text_chunks,
             tables=tables,
@@ -615,8 +617,10 @@ async def import_document_file(file: UploadFile = File(...), version: str = Form
             doc_type=doc_type,
         )
 
+        print(f"✅ Qdrant 写入完成", flush=True)
         indexed_image_ids = []
         if regular_imgs and media_store:
+            print(f"🖼️  上传图片到对象存储: {len(regular_imgs)} 张", flush=True)
             indexed_image_ids = await asyncio.to_thread(
                 index_images, regular_imgs, media_store, file.filename, version, doc_type
             )
