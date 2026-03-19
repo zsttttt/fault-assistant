@@ -634,8 +634,6 @@ async def import_document_file(file: UploadFile = File(...), version: str = Form
             "message": f"文档解析完成，已导入 {len(text_chunks)} 段文本、{len(tables)} 个表格、{len(indexed_image_ids)} 张图片"
         }
     except Exception as e:
-        import traceback
-        print(f"❌ 文档处理异常: {traceback.format_exc()}", flush=True)
         raise HTTPException(status_code=500, detail=f"文档解析失败: {str(e)}")
     finally:
         if os.path.exists(tmp_path):
