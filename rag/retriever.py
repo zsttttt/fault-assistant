@@ -150,7 +150,6 @@ class KnowledgeRetriever:
         """
         from qdrant_client.models import Filter, FieldCondition, MatchValue, SearchParams
 
-        from qdrant_client.models import Should
         version_filter = Filter(
             should=[
                 FieldCondition(key="metadata.version", match=MatchValue(value=version_code)),

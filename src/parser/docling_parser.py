@@ -138,13 +138,16 @@ def _make_converter(extract_images: bool = False, table_structure: bool = True):
     import os
     from pathlib import Path
     from docling.document_converter import DocumentConverter, PdfFormatOption
-    from docling.datamodel.pipeline_options import PdfPipelineOptions
+    from docling.datamodel.pipeline_options import PdfPipelineOptions, AcceleratorOptions, AcceleratorDevice
     from docling.datamodel.base_models import InputFormat
 
     pipeline_options = PdfPipelineOptions()
     pipeline_options.do_ocr = False
     pipeline_options.do_table_structure = table_structure
     pipeline_options.generate_picture_images = extract_images
+    pipeline_options.accelerator_options = AcceleratorOptions(
+        device=AcceleratorDevice.AUTO,
+    )
 
     artifacts_path = os.getenv("DOCLING_ARTIFACTS_PATH", "")
     if artifacts_path:
